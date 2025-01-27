@@ -54,12 +54,16 @@ class MultiExperiment:
                         setattr(section_obj, param, value)
 
     def _run_single_experiment(self, config: Config, results_dir: str):
-        experiment = Experiment(config, results_dir=results_dir)
-        experiment.run_experiment()    
-        experiment.plot_results(savefig=True)
-
-        del experiment
-        torch.cuda.empty_cache()
+        try:
+            experiment = Experiment(config, results_dir=results_dir)
+            experiment.run_experiment()    
+            experiment.plot_results(savefig=True)
+            print(f"[SUCCESS] Experiment {config.exp.name} run successfully.")
+        except torch.cuda.OutOfMemoryError:
+            print(f"[OOM] GPU out of memory in experiment: {config.exp.name}. Skipping...")
+        finally:
+            del experiment
+            torch.cuda.empty_cache()
 
 
 # added to venv/bin/activate script: 

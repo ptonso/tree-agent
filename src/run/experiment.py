@@ -39,7 +39,8 @@ class Experiment:
         all_times = []
 
         for run_idx in range(self.config.exp.n_runs):
-            self.logger.info(f"{'-'*30}\nStarting training run {run_idx + 1}/{self.config.exp.n_runs}")
+            self.logger.info(f"{'-'*30}")
+            self.logger.info(f"Starting training run {run_idx + 1}/{self.config.exp.n_runs}")
             t0 = time.time()
             
             self.config.session.seed = self.config.exp.seed + run_idx
