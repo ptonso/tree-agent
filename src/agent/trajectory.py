@@ -4,7 +4,7 @@ import torch
 from dataclasses import dataclass
 from typing import List, Optional
 
-from .structures import State, Action
+from src.agent.structures import State, Action
 
 @dataclass
 class TrajectoryData:

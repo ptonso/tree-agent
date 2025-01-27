@@ -1,0 +1,8 @@
+2025-01-27 00:16:03,009 - INFO - Logger intialized. Writing to session_log.txt
+2025-01-27 00:16:03,014 - INFO - Random seed set to 42
+2025-01-27 00:16:04,343 - INFO - Session setup complete.
+2025-01-27 00:16:10,637 - INFO - Episode 001: Total Reward = 9.0
+2025-01-27 00:16:16,747 - INFO - Episode 002: Total Reward = 5.0
+2025-01-27 00:16:22,845 - INFO - Episode 003: Total Reward = 9.0
+2025-01-27 00:16:28,932 - INFO - Episode 004: Total Reward = 5.0
+2025-01-27 00:16:28,932 - INFO - Training on batch of 4 trajectories

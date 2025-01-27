@@ -3,14 +3,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Optional
 
-from .actor import Actor
-from .critic import Critic
-
-from .structures import State, Action
-from .trajectory import Trajectory
-from .batch import Batch
+from src.agent.actor import Actor
+from src.agent.critic import Critic
+from src.agent.structures import State, Action
+from src.agent.trajectory import Trajectory
+from src.agent.batch import Batch
 
 class Agent:
     def __init__(
@@ -70,8 +69,8 @@ class Agent:
             advantages: torch.Tensor
         ) -> torch.Tensor:
         """Compute actor loss using policy gradient with normalized advantages"""
-        action_probs = self.actor(states) # [T, action_dim]
-        log_probs = torch.log(action_probs.gather(1, actions.unsqueeze(1))).squeeze() # [T]
+        action_probs = self.actor(states) # [B*T, action_dim]
+        log_probs = torch.log(action_probs.gather(1, actions.unsqueeze(1))).squeeze() # [B*T]
         actor_loss = -(advantages.detach() * log_probs).mean()
 
         entropy = -(action_probs * torch.log(action_probs + 1e-10)).sum(dim=1).mean()
@@ -90,7 +89,7 @@ class Agent:
     def train(
             self,
             trajectories: List[Trajectory],
-            verbose: bool = False
+            logger: Optional[object] = None,
         ) -> Dict[str, float]:
         """Train agent using list of trajectory"""
 
@@ -127,6 +126,10 @@ class Agent:
         total_loss.backward()
 
         # Clip gradient if configured
+        torch.nn.utils.clip_grad_norm_(
+            list(self.actor.parameters()) + list(self.critic.parameters()),
+            max_norm=1.0
+        )
 
         self.actor_optimizer.step()
         self.critic_optimizer.step()
@@ -147,9 +150,9 @@ class Agent:
             'min_trajectory_length': min(tensors.trajectory_lengths)
         }
 
-        if verbose:
-            print(f"Actor Loss: {metrics['actor_loss']:.4f}, "
-                f"Critic Loss: {metrics['critic_loss']:.4f}")
+        if logger is not None:
+            logger.info(f"Actor Loss: {metrics['actor_loss']:.4f}")
+            logger.info(f"Critic Loss: {metrics['critic_loss']:.4f}")
         
         return metrics
         

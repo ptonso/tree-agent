@@ -13,6 +13,9 @@ class State:
         if state_data.ndim == 3:
             state_data = np.expand_dims(state_data, axis=0)
 
+        # uint8 [0..255] -> float32 [0..1]
+        state_data = state_data.astype(np.float32) / 255.0
+
         self.state_data = state_data # (B, H, W, C)
         self.shape = state_data.shape
         self.device = device
