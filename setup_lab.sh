@@ -1,38 +1,65 @@
 #!/bin/bash
 set -e  # Exit on any error
 
-echo "=== DeepMind Lab Initial Setup Script ==="
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+VENV_PATH="${SCRIPT_DIR}/venv"
+LAB_REPO="https://github.com/google-deepmind/lab.git"
+BAZELISK_URL="https://github.com/bazelbuild/bazelisk/releases/download/v1.17.0/bazelisk-linux-amd64"
 
-# Step 1: Install dependencies
-echo "Installing dependencies..."
-sudo apt update
-sudo apt install -y build-essential libosmesa6-dev libgl1-mesa-dev \
-    libxi-dev libxcursor-dev libxinerama-dev libxrandr-dev libopenal-dev \
-    mesa-utils python3-dev python3-venv git wget unzip zlib1g-dev g++ pip
+function install_dependencies {
+    echo "Installing dependencies..."
+    sudo apt update
+    sudo apt install -y build-essential libosmesa6-dev libgl1-mesa-dev \
+        libxi-dev libxcursor-dev libxinerama-dev libxrandr-dev libopenal-dev \
+        mesa-utils python3-dev python3-venv git wget unzip zlib1g-dev g++
+}
 
-# Step 2: Install Bazelisk
-echo "Installing Bazelisk..."
-wget https://github.com/bazelbuild/bazelisk/releases/download/v1.17.0/bazelisk-linux-amd64 -O bazelisk
-chmod +x bazelisk
-sudo mv bazelisk /usr/local/bin/bazel
+function install_bazelisk {
+    echo "Installing Bazelisk..."
+    wget -q $BAZELISK_URL -O bazelisk
+    chmod +x bazelisk
+    sudo mv bazelisk /usr/local/bin/bazel
+    
+    echo "Verifying Bazel installation..."
+    bazel --version
+}
 
-# Verify Bazel installation
-bazel --version
+function setup_virtualenv {
+    if [ -d "${VENV_PATH}" ]; then
+        echo "Virtual environment already exists at $VENV_PATH. Activating..."
+    else
+        echo "Creating new virtual environment at $VENV_PATH..."
+        python3 -m venv "${VENV_PATH}"
+    fi
 
-# Step 3: Clone DeepMind Lab
-echo "Cloning DeepMind Lab repository..."
-git clone https://github.com/google-deepmind/lab.git
-cd lab
+    source "${VENV_PATH}/bin/activate"
+    echo "Upgrading pip, setuptools, and wheel..."
+    pip install --upgrade pip setuptools wheel
+    pip install numpy dm_env opencv-python
+}
 
-# Step 4: Configure bazelrc
-echo "Configuring .bazelrc..."
-echo "build --enable_workspace" > .bazelrc
-echo "build --python_version=PY3" >> .bazelrc
-echo "build --action_env=PYTHON_BIN_PATH=$(which python3)" >> .bazelrc
+function clone_and_configure_lab {
+    if [ ! -d "lab" ]; then
+        echo "Cloning DeepMind Lab repository..."
+        git clone $LAB_REPO
+    else
+        echo "DeepMind Lab repository already exists. Pulling latest changes..."
+        cd lab
+        git pull
+        cd ..
+    fi
 
-# Step 5: Modify BUILD file
-echo "Modifying BUILD file..."
-sed -i '/\[py_binary(/,/\]]/c\
+    cd lab
+
+    echo "Configuring .bazelrc..."
+    cat > .bazelrc << EOL
+build --enable_workspace
+build --python_version=PY3
+build --action_env=PYTHON_BIN_PATH=$(which python3)
+EOL
+
+    echo "Modifying BUILD file..."
+    sed -i '/\[py_binary(/,/\]]/c\
 py_binary(\
     name = "python_game_py3",\
     srcs = ["examples/game_main.py"],\
@@ -44,9 +71,8 @@ py_binary(\
     deps = ["@six_archive//:six"],\
 )' BUILD
 
-# Step 6: Replace content of python_system.bzl
-echo "Replacing python_system.bzl content..."
-cat > python_system.bzl << 'EOL'
+    echo "Replacing python_system.bzl content..."
+    cat > python_system.bzl << 'EOL'
 # Copyright 2021 DeepMind Technologies Limited.
 #
 # This program is free software; you can redistribute it and/or modify
@@ -108,4 +134,33 @@ python_repo = repository_rule(
 )
 EOL
 
-echo "Initial setup complete! Now run build_venv.sh to create virtual environment and build the project."
+    cd ..
+}
+
+function build_lab {
+    echo "Building the project with Bazel..."
+    cd lab
+    bazel clean --expunge
+    bazel build -c opt //python/pip_package:build_pip_package --verbose_failures
+
+    echo "Generating wheel file..."
+    ./bazel-bin/python/pip_package/build_pip_package /tmp/dmlab_pkg
+
+    echo "Installing package..."
+    pip install --force-reinstall /tmp/dmlab_pkg/deepmind_lab-*.whl
+
+    echo "Cleaning up..."
+    SITE_PACKAGES="${VENV_PATH}/lib/python3.10/site-packages/deepmind_lab"
+    mv "${SITE_PACKAGES}/_main/"* "${SITE_PACKAGES}/"
+    rmdir "${SITE_PACKAGES}/_main"
+    cd ..
+}
+
+# Main Script
+install_dependencies
+install_bazelisk
+setup_virtualenv
+clone_and_configure_lab
+build_lab
+
+echo "DeepMind Lab setup and installation complete!"

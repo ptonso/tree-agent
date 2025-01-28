@@ -13,12 +13,12 @@ class MultiExperiment:
             self, 
             baseline_config: Config, 
             parametric_changes: List[Dict],
-            results_dir: str = 'multi-experiment'
+            base_dir: str = 'multi-experiment'
             ):
         self.baseline_config = baseline_config
         self.parametric_changes = parametric_changes
-        self.results_dir = results_dir
-        os.makedirs(self.results_dir, exist_ok=True)
+        self.base_dir = base_dir
+        os.makedirs(self.base_dir, exist_ok=True)
 
         self.experiment_configs = self.setup_experiments()
 
@@ -26,8 +26,8 @@ class MultiExperiment:
         experiment_configs = []
         for changes in self.parametric_changes:
             modified_config = deepcopy(self.baseline_config)
-            self._apply_changes(modified_config, changes)
-            exp_dir = os.path.join(self.results_dir, f"{modified_config.exp.name}")
+            MultiExperiment._apply_changes(modified_config, changes)
+            exp_dir = os.path.join(self.base_dir, f"{modified_config.exp.name}")
             os.makedirs(exp_dir, exist_ok=True)
             experiment_configs.append((modified_config, exp_dir))
         return experiment_configs
@@ -44,25 +44,27 @@ class MultiExperiment:
         # with multiprocessing.Pool(processes=num_workers) as pool:
         #     pool.starmap(self._run_single_experiment, self.experiment_configs)
 
-    def _apply_changes(self, config: Config, changes: Dict):
-        """Apply a dictionary of changes to configuration object."""
+    @staticmethod
+    def _apply_changes(config: Config, changes: Dict):
+        "Apply a possibly nested dictionary of changes to configuration."
         for section, params in changes.items():
             if hasattr(config, section):
                 section_obj = getattr(config, section)
-                for param, value in params.items():
-                    if hasattr(section_obj, param):
-                        setattr(section_obj, param, value)
+                if isinstance(params, dict):
+                    MultiExperiment._apply_changes(section_obj, params)
+                else:
+                    setattr(config, section, params)
 
-    def _run_single_experiment(self, config: Config, results_dir: str):
+
+    def _run_single_experiment(self, config: Config, base_dir: str):
         try:
-            experiment = Experiment(config, results_dir=results_dir)
+            experiment = Experiment(config, base_dir=base_dir)
             experiment.run_experiment()    
             experiment.plot_results(savefig=True)
             print(f"[SUCCESS] Experiment {config.exp.name} run successfully.")
         except torch.cuda.OutOfMemoryError:
             print(f"[OOM] GPU out of memory in experiment: {config.exp.name}. Skipping...")
         finally:
-            del experiment
             torch.cuda.empty_cache()
 
 

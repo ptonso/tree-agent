@@ -1,11 +1,12 @@
 import torch
 import torch.nn as nn
-from typing import List
+from typing import List, Optional
 
 class CNN(nn.Module):
     def __init__(
             self,
-            input_channels: int = 3,
+            input_channels: int,
+            config: Optional[object] = None,
             hidden_channels: List[int] = [32, 64,  3],
             kernel_sizes:    List[int] = [ 3,  3,  3],
             strides:         List[int] = [ 1,  1,  1],
@@ -25,9 +26,18 @@ class CNN(nn.Module):
         """
         super().__init__()
 
+        if config is not None:
+            hidden_channels = config.agent.world_model.hidden_channels
+            kernel_sizes    = config.agent.world_model.kernel_sizes
+            strides         = config.agent.world_model.strides
+            paddings        = config.agent.world_model.paddings
+            use_batchnorm   = config.agent.world_model.use_batchnorm
+            activation_fn   = config.agent.world_model.activation_fn
+
+
         assert len(hidden_channels) == len(kernel_sizes), "kernel_sizes must match hidden_channels in size"
-        assert len(hidden_channels) == len(strides), "strides must match hidden_channels in size"
-        assert len(hidden_channels) == len(paddings), "paddings must match hidden_channels in size"
+        assert len(hidden_channels) == len(strides),      "strides must match hidden_channels in size"
+        assert len(hidden_channels) == len(paddings),     "paddings must match hidden_channels in size"
 
         layers = []
         in_channels = input_channels
@@ -39,11 +49,13 @@ class CNN(nn.Module):
             in_channels = out_channels
 
         self.conv_layers = nn.Sequential(*layers)
+        self.flatten = nn.Flatten()
         self._initialize_weights()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x = x / 255. # Normalize pixel values
-        return self.conv_layers(x)
+        x = self.conv_layers(x)
+        x = self.flatten(x)
+        return x
     
     def _initialize_weights(self) -> None:
         for m in self.modules():

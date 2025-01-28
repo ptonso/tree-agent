@@ -5,25 +5,45 @@ from dataclasses import dataclass, field
 @dataclass
 class EnvConfig:
     # 16:12
-    width: int = 80    # 16*5
+    width: int  = 80    # 16*5
     height: int = 60   # 12*5
-    fps: int = 60
-    level: str = "seekavoid_arena_01"
+    fps: int    = 60
+    level: str  = "seekavoid_arena_01"
     observations: List[str] = field(default_factory=lambda: ["RGB_INTERLEAVED"])
     num_steps: int = 4
     render_width: int = 780
     render_height: int = 480
 
+
+@dataclass
+class WorldModelConfig:
+    cnn_lr: float = 1e-4
+    hidden_channels: List[int] = field(default_factory=lambda: [16, 32])
+    kernel_sizes:    List[int] = field(default_factory=lambda: [ 5,  4])
+    strides:         List[int] = field(default_factory=lambda: [ 2,  2])
+    paddings:        List[int] = field(default_factory=lambda: [ 1,  1])
+    use_batchnorm: bool = False,
+    activation_fn: torch.nn.Module = torch.nn.ReLU()
+
+@dataclass
+class ActorConfig:
+    lr: float = 2e-5
+    layers: List[int] = field(default_factory=lambda: [32, 32])
+
+@dataclass
+class CriticConfig:
+    lr: float = 1e-5
+    layers: List[int] = field(default_factory=lambda: [64])
+
 @dataclass
 class AgentConfig:
-    actor_lr: float = 1e-4
-    critic_lr: float = 1e-4
-    cnn_lr: float = 4e-4
     gamma: float = 0.99
     entropy_coef: float = 0.05
-    actor_layers: List[int] = field(default_factory=lambda: [64, 64])
-    critic_layers: List[int] = field(default_factory=lambda: [128])
     verbose_train: bool = True
+    mini_batch_size: int = 256
+    world_model: WorldModelConfig = field(default_factory=WorldModelConfig)
+    actor: ActorConfig = field(default_factory=ActorConfig)
+    critic: CriticConfig = field(default_factory=CriticConfig)
 
 
 @dataclass

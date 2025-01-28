@@ -97,10 +97,10 @@ class Trajectory:
     def get_tensors(self):
         states, actions, rewards, next_states, dones, returns = self.get_instances()
 
-        states_tensor = torch.cat([s.as_flattened_tensor for s in states], dim=0)
+        states_tensor = torch.cat([s.as_tensor for s in states], dim=0)
         actions_tensor = torch.tensor(self.actions, dtype=torch.long, device=self.device)
         rewards_tensor = torch.tensor(rewards, dtype=torch.float32).to(self.device)
-        next_states_tensor = torch.cat([s.as_flattened_tensor for s in next_states], dim=0)
+        next_states_tensor = torch.cat([s.as_tensor for s in next_states], dim=0)
         dones_tensor = torch.tensor(dones, dtype=torch.float32).to(self.device)
         returns_tensor = torch.tensor(returns, dtype=torch.float32).to(self.device)
 

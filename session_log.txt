@@ -1,8 +1,40 @@
-2025-01-27 00:16:03,009 - INFO - Logger intialized. Writing to session_log.txt
-2025-01-27 00:16:03,014 - INFO - Random seed set to 42
-2025-01-27 00:16:04,343 - INFO - Session setup complete.
-2025-01-27 00:16:10,637 - INFO - Episode 001: Total Reward = 9.0
-2025-01-27 00:16:16,747 - INFO - Episode 002: Total Reward = 5.0
-2025-01-27 00:16:22,845 - INFO - Episode 003: Total Reward = 9.0
-2025-01-27 00:16:28,932 - INFO - Episode 004: Total Reward = 5.0
-2025-01-27 00:16:28,932 - INFO - Training on batch of 4 trajectories
+2025-01-27 23:35:40,946 - INFO - Logger intialized. Writing to session_log.txt
+2025-01-27 23:35:40,951 - INFO - Random seed set to 42
+2025-01-27 23:35:42,626 - INFO - Session setup complete.
+2025-01-27 23:35:49,671 - INFO - Episode 001: Total Reward = 10.0
+2025-01-27 23:35:56,342 - INFO - Episode 002: Total Reward = 4.0
+2025-01-27 23:36:02,989 - INFO - Episode 003: Total Reward = 11.0
+2025-01-27 23:36:09,835 - INFO - Episode 004: Total Reward = 7.0
+2025-01-27 23:36:09,835 - INFO - Training on batch of 4 trajectories
+2025-01-27 23:36:11,258 - INFO - Actor Loss: -0.0411
+2025-01-27 23:36:11,258 - INFO - Critic Loss: 0.9825
+2025-01-27 23:36:17,886 - INFO - Episode 005: Total Reward = 9.0
+2025-01-27 23:36:24,599 - INFO - Episode 006: Total Reward = 9.0
+2025-01-27 23:36:31,511 - INFO - Episode 007: Total Reward = 10.0
+2025-01-27 23:36:38,483 - INFO - Episode 008: Total Reward = 9.0
+2025-01-27 23:36:38,483 - INFO - Training on batch of 4 trajectories
+2025-01-27 23:36:39,724 - INFO - Actor Loss: -0.0515
+2025-01-27 23:36:39,724 - INFO - Critic Loss: 0.6458
+2025-01-27 23:36:46,497 - INFO - Episode 009: Total Reward = 4.0
+2025-01-27 23:36:53,293 - INFO - Episode 010: Total Reward = 3.0
+2025-01-27 23:37:00,010 - INFO - Episode 011: Total Reward = 9.0
+2025-01-27 23:37:06,760 - INFO - Episode 012: Total Reward = 1.0
+2025-01-27 23:37:06,760 - INFO - Training on batch of 4 trajectories
+2025-01-27 23:37:07,949 - INFO - Actor Loss: -0.0480
+2025-01-27 23:37:07,949 - INFO - Critic Loss: 0.5008
+2025-01-27 23:37:14,931 - INFO - Episode 013: Total Reward = 1.0
+2025-01-27 23:37:21,789 - INFO - Episode 014: Total Reward = 4.0
+2025-01-27 23:37:28,842 - INFO - Episode 015: Total Reward = 8.0
+2025-01-27 23:37:35,653 - INFO - Episode 016: Total Reward = 4.0
+2025-01-27 23:37:35,653 - INFO - Training on batch of 4 trajectories
+2025-01-27 23:37:36,842 - INFO - Actor Loss: -0.0559
+2025-01-27 23:37:36,842 - INFO - Critic Loss: 0.4499
+2025-01-27 23:37:43,397 - INFO - Episode 017: Total Reward = 3.0
+2025-01-27 23:37:50,130 - INFO - Episode 018: Total Reward = 3.0
+2025-01-27 23:37:56,667 - INFO - Episode 019: Total Reward = 8.0
+2025-01-27 23:38:03,186 - INFO - Episode 020: Total Reward = 9.0
+2025-01-27 23:38:03,186 - INFO - Training on batch of 4 trajectories
+2025-01-27 23:38:04,368 - INFO - Actor Loss: -0.0558
+2025-01-27 23:38:04,368 - INFO - Critic Loss: 0.4641
+2025-01-27 23:38:10,897 - INFO - Episode 021: Total Reward = 5.0
+2025-01-27 23:38:17,445 - INFO - Episode 022: Total Reward = 2.0

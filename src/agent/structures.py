@@ -4,26 +4,42 @@ from typing import Optional
 
 
 class State:
+    """Wraps data in shape [B, C, H, W] for agent."""
     def __init__(self, state_data: np.ndarray, device: str):
-        """Handle state data transformations
-        Args:
-            state_data: RGB fraome of shape (H, W, C) or (B, H, W, C)
-            device: torch device to use
         """
-        if state_data.ndim == 3:
-            state_data = np.expand_dims(state_data, axis=0)
-
-        # uint8 [0..255] -> float32 [0..1]
-        state_data = state_data.astype(np.float32) / 255.0
-
-        self.state_data = state_data # (B, H, W, C)
-        self.shape = state_data.shape
+        Args:
+            state_data: already in (B, C, H, W) format, float32, scaled to [0..1]
+        """
+        self.state_data = state_data
         self.device = device
 
-        self._as_numpy: Optional[np.ndarray] = None
         self._as_tensor: Optional[torch.Tensor] = None
         self._as_tensor_with_grad: Optional[torch.Tensor] = None
         self._as_flattened_tensor: Optional[torch.Tensor] = None
+
+
+    @classmethod
+    def from_observation(cls, observation: np.ndarray, device: str) -> "State":
+        """
+        Create a State from a raw observation in shape (H, W, C)
+        or (B, H, W, C).
+        """
+        if observation.ndim == 3:
+            observation = np.expand_dims(observation, axis=0)
+
+        # uint8 [0..255] -> float32 [0..1]
+        observation = observation.astype(np.float32) / 255.0
+
+        # from (B, H, W, C) to (B, C, H, W)
+        observation = np.transpose(observation, (0, 3, 1, 2))
+
+        return cls(observation, device)
+
+
+    @classmethod
+    def from_embedding(cls, embedding: np.ndarray, device: str) -> "State":
+        pass
+
 
     @property
     def as_numpy(self) -> np.ndarray:
@@ -35,7 +51,7 @@ class State:
     def as_tensor(self) -> torch.Tensor:
         if self._as_tensor is None:
             tensor = torch.tensor(self.state_data, dtype=torch.float32)
-            self._as_tensor = tensor.permute(0, 3, 1, 2).to(self.device) # (B, C, H, W)
+            self._as_tensor = tensor.to(self.device) # (B, C, H, W)
         return self._as_tensor
     
     @property

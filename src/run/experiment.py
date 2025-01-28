@@ -3,8 +3,9 @@ import json
 import time
 import datetime
 import inspect
-import logging
 import numpy as np
+import torch
+from dataclasses import is_dataclass, fields
 import matplotlib.pyplot as plt
 
 from src.run.session import Session
@@ -18,9 +19,9 @@ from src.agent.critic import Critic
 
 class Experiment:
     """Handles multiple training runs to test a configuration/hypothesis"""
-    def __init__(self, config: Config, results_dir: str = 'experiments'):
+    def __init__(self, config: Config, base_dir: str = "experiments"):
         self.config = config
-        self.results_dir = results_dir
+        self.results_dir = os.path.join(base_dir, config.exp.name)
         os.makedirs(self.results_dir, exist_ok=True)
 
         log_file = os.path.join(self.results_dir, f"{self.config.exp.name}_log.txt")
@@ -39,8 +40,9 @@ class Experiment:
         all_times = []
 
         for run_idx in range(self.config.exp.n_runs):
-            self.logger.info(f"{'-'*30}")
+            self.logger.info(f"{'-'*40}")
             self.logger.info(f"Starting training run {run_idx + 1}/{self.config.exp.n_runs}")
+            self.logger.info(f"{'-'*40}")
             t0 = time.time()
             
             self.config.session.seed = self.config.exp.seed + run_idx
@@ -66,16 +68,7 @@ class Experiment:
         
         experiment_data = {}
 
-        experiment_data["config"] = {
-            "exp": {field: getattr(self.config.exp, field)
-                for field in self.config.exp.__dataclass_fields__},
-            "session": {field: getattr(self.config.session, field)
-                for field in self.config.session.__dataclass_fields__},
-            "env": {field: getattr(self.config.env, field)
-                for field in self.config.env.__dataclass_fields__},
-            "agent": {field: getattr(self.config.agent, field)
-                for field in self.config.agent.__dataclass_fields__},
-            }
+        experiment_data["config"] = Experiment.dataclass2dict(self.config)
         
         experiment_data["code"] = {
             "agent": inspect.getsource(Agent),
@@ -129,8 +122,22 @@ class Experiment:
         plt.legend()
         
         if savefig:
-            fig_path = os.path.join(self.results_dir, f"{self.config.exp.name}.png")    
+            fig_path = os.path.join(self.results_dir, f"{self.filename}.png")    
             plt.savefig(fig_path, dpi=300, bbox_inches='tight')
         plt.show(block=False)
         plt.pause(0.5)
 
+    @staticmethod
+    def dataclass2dict(obj):
+        if is_dataclass(obj):
+            result = {}
+            for f in fields(obj):
+                value = getattr(obj, f.name)
+                result[f.name] = Experiment.dataclass2dict(value)
+            return result
+        elif isinstance(obj, list):
+            return [Experiment.dataclass2dict(v) for v in obj]
+        elif isinstance(obj, torch.nn.Module):
+            return obj.__class__.__name__
+        else:
+            return obj

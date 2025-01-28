@@ -31,12 +31,12 @@ class Session:
         episode_reward = 0.
         done = False
         
-        state = State(observation, device=self.config.device)
+        state = State.from_observation(observation, device=self.config.device)
 
         for step in range(self.n_steps):
             action = self.agent.policy(state)
             next_observation, reward, done = self.env.step(action.as_lab)
-            next_state = State(next_observation, device=self.config.device)
+            next_state = State.from_observation(next_observation, device=self.config.device)
             episode_reward += reward
 
             if self.config.session.render:
@@ -52,7 +52,7 @@ class Session:
 
             if done:
                 observation = self.env.reset()
-                state = State(observation, device=self.config.device)
+                state = State.from_observation(observation, device=self.config.device)
             else:
                 state = next_state
                    
@@ -88,7 +88,7 @@ class Session:
         observation = self.env.reset(seed=self.seed)
 
         H, W, C = observation.shape
-        state_dim = H * W * C
+        state_dim = (C, H, W)
         action_dim = self.env.action_space
 
         self.agent = Agent(

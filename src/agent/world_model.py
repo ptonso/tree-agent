@@ -20,13 +20,3 @@ class WorldModel:
         )
 
 
-# add to config
-@dataclass
-class WorldModel:
-    input_channels: int = 3,
-    hidden_channels: List[int] = [32, 64,  3],
-    kernel_sizes:    List[int] = [ 3,  3,  3],
-    strides:         List[int] = [ 1,  1,  1],
-    paddings:        List[int] = [ 1,  1,  1],
-    use_batchnorm: bool = True,
-    activation_fn: torch.nn.Module = torch.nn.ReLU()

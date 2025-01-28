@@ -35,17 +35,17 @@ def rendered_main():
 def single_exp_main():
     config = Config(
         exp=ExpConfig(
-            name="mvp",
-            n_runs=10
+            name="cnn",
+            n_runs=3
         ),
         session=SessionConfig(
-            n_episodes=100,
+            n_episodes=500,
             n_steps=1000,
             seed=42,
             render=True
         )
     )
-    experiment = Experiment(config, results_dir="experiments/mvp")
+    experiment = Experiment(config, base_dir="experiments")
     experiment.run_experiment()
     experiment.plot_results(savefig=True)
 
@@ -58,44 +58,70 @@ def multi_exp_main():
     parametric_changes = [
         {
             "exp": {"name": "small_nets_large_lr"},
-            "agent": {"actor_lr": 5e-4, "critic_lr": 5e-4, "actor_layers": [32, 32], "critic_layers": [32, 32]},
+            "agent": {
+                "actor": {"lr": 1e-4, "layers": [32]},
+                "critic": {"lr": 5e-5, "layers": [32]},
+                "world_model": {}
+            },
             "env": {},
-            "session": {},
+            "session": {"n_episodes":3},
         },
         {
             "exp": {"name": "low_res"},
-            "agent": {},
+            "agent": {
+                "actor": {},
+                "critic": {},
+                "world_model": {}
+            },
             "env": {"width": 48, "height": 36},  # 16:12 * 3
-            "session": {},
+            "session": {"n_episodes":3},
         },
         {
             "exp": {"name": "high_res"},
-            "agent": {},
+            "agent": {
+                "actor": {},
+                "critic": {},
+                "world_model": {}
+            },
             "env": {"width": 96, "height": 72}, # 16:12 * 6
-            "session": {},
+            "session": {"n_episodes":3},
         },
         {
             "exp": {"name": "high_exploration"},
-            "agent": {"entropy_coef": 0.15},
+            "agent": {
+                "actor": {},
+                "critic": {},
+                "world_model": {},
+                "entropy_coef": 0.15
+            },
             "env": {},
-            "session": {},
+            "session": {"n_episodes":3},
         },
         {
             "exp": {"name": "lower_gamma"},
-            "agent": {"gamma": 0.95},
+            "agent": {
+                "actor": {},
+                "critic": {},
+                "world_model": {},
+                "gamma": 0.95
+            },
             "env": {},
-            "session": {},
+            "session": {"n_episodes":3},
         },
-        {
-            "exp": {"name": "large_nets"},
-            "agent": {"actor_lr": 3e-4, "critic_lr": 3e-4, "actor_layers": [128, 128, 64], "critic_layers": [128, 128]},
-            "env": {},
-            "session": {},
-        },
+        # {
+        #     "exp": {"name": "large_nets"},
+        #     "agent": {
+        #         "actor": {"lr": 3e-4, "layers": [128, 128, 64]},
+        #         "critic": {"lr": 3e-4, "layers": [128, 128]},
+        #         "world_model": {}
+        #     },
+        #     "env": {},
+        #     "session": {},
+        # },
     ]
 
-    base_results_dir = "experiments/mvp"
-    multi_experiment = MultiExperiment(baseline_config, parametric_changes, results_dir=base_results_dir)
+    base_results_dir = "experiments/cnn"
+    multi_experiment = MultiExperiment(baseline_config, parametric_changes, base_dir=base_results_dir)
     multi_experiment.run_experiments()
     
 
