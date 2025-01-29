@@ -27,16 +27,14 @@ class MultiExperiment:
         for changes in self.parametric_changes:
             modified_config = deepcopy(self.baseline_config)
             MultiExperiment._apply_changes(modified_config, changes)
-            exp_dir = os.path.join(self.base_dir, f"{modified_config.exp.name}")
-            os.makedirs(exp_dir, exist_ok=True)
-            experiment_configs.append((modified_config, exp_dir))
+            experiment_configs.append(modified_config)
         return experiment_configs
 
 
     def run_experiments(self):
-        for (config, exp_dir) in self.experiment_configs:
+        for config in self.experiment_configs:
             print(f"Running experiment: {config.exp.name}")
-            self._run_single_experiment(config, exp_dir)
+            self._run_single_experiment(config, self.base_dir)
         input("Press ENTER to close plots")
 
 

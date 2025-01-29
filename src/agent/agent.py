@@ -83,6 +83,21 @@ class Agent:
         """Compute critic loss using MSE between predicted values and returns"""
         critic_loss = F.mse_loss(state_values, returns.unsqueeze(-1))
         return critic_loss
+    
+    def adaptive_gradient_clipping(
+            self,
+            parameters, 
+            clip_factor=0.3, 
+            eps=1e-3
+        ):
+        for param in parameters:
+            if param.grad is not None:
+                param_norm = param.norm()
+                grad_norm = param.grad.norm()
+                clip_value = clip_factor * param_norm + eps
+                if grad_norm > clip_value:
+                    param.grad *= clip_value / (grad_norm + eps)
+
 
     def train(
             self,
@@ -123,11 +138,8 @@ class Agent:
             self.critic_optimizer.zero_grad()
             total_loss.backward()
 
-            torch.nn.utils.clip_grad_norm_(
-                list(self.actor.parameters()) + list(self.critic.parameters()),
-                max_norm=1.0
-            )
-
+            self.adaptive_gradient_clipping(list(self.actor.parameters()) + list(self.critic.parameters()))
+        
             self.actor_optimizer.step()
             self.critic_optimizer.step()
 
@@ -249,3 +261,6 @@ class Agent:
             'min_trajectory_length': min(tensors.trajectory_lengths)
         }
         return metrics
+
+
+

@@ -5,9 +5,9 @@ from src.run.config import Config, SessionConfig, EnvConfig, ExpConfig
 
 
 def main():
-    # rendered_main()
+    rendered_main()
     # single_exp_main()
-    multi_exp_main()
+    # multi_exp_main()
     pass
 
 
@@ -56,68 +56,78 @@ def multi_exp_main():
     baseline_config.session.n_episodes = 500
 
     parametric_changes = [
-        {
-            "exp": {"name": "small_nets_large_lr"},
-            "agent": {
-                "actor": {"lr": 1e-4, "layers": [32]},
-                "critic": {"lr": 5e-5, "layers": [32]},
-                "world_model": {}
-            },
-            "env": {},
-            "session": {"n_episodes":3},
-        },
-        {
-            "exp": {"name": "low_res"},
-            "agent": {
-                "actor": {},
-                "critic": {},
-                "world_model": {}
-            },
-            "env": {"width": 48, "height": 36},  # 16:12 * 3
-            "session": {"n_episodes":3},
-        },
-        {
-            "exp": {"name": "high_res"},
-            "agent": {
-                "actor": {},
-                "critic": {},
-                "world_model": {}
-            },
-            "env": {"width": 96, "height": 72}, # 16:12 * 6
-            "session": {"n_episodes":3},
-        },
-        {
-            "exp": {"name": "high_exploration"},
-            "agent": {
-                "actor": {},
-                "critic": {},
-                "world_model": {},
-                "entropy_coef": 0.15
-            },
-            "env": {},
-            "session": {"n_episodes":3},
-        },
-        {
-            "exp": {"name": "lower_gamma"},
-            "agent": {
-                "actor": {},
-                "critic": {},
-                "world_model": {},
-                "gamma": 0.95
-            },
-            "env": {},
-            "session": {"n_episodes":3},
-        },
         # {
-        #     "exp": {"name": "large_nets"},
+        #     "exp": {"name": "small_nets_large_lr"},
         #     "agent": {
-        #         "actor": {"lr": 3e-4, "layers": [128, 128, 64]},
-        #         "critic": {"lr": 3e-4, "layers": [128, 128]},
-        #         "world_model": {}
+        #         "actor": {"lr": 1e-4, "layers": [32]},
+        #         "critic": {"lr": 5e-5, "layers": [32]},
+        #         "world_model": {"hidden_channels": [8, 16]}
         #     },
         #     "env": {},
         #     "session": {},
         # },
+        # {
+        #     "exp": {"name": "low_res"},
+        #     "agent": {
+        #         "actor": {},
+        #         "critic": {},
+        #         "world_model": {}
+        #     },
+        #     "env": {"width": 48, "height": 36},  # 16:12 * 3
+        #     "session": {},
+        # },
+        # {
+        #     "exp": {"name": "high_res"},
+        #     "agent": {
+        #         "actor": {},
+        #         "critic": {},
+        #         "world_model": {}
+        #     },
+        #     "env": {"width": 96, "height": 72}, # 16:12 * 6
+        #     "session": {},
+        # },
+        # {
+        #     "exp": {"name": "high_exploration"},
+        #     "agent": {
+        #         "actor": {},
+        #         "critic": {},
+        #         "world_model": {},
+        #         "entropy_coef": 0.15
+        #     },
+        #     "env": {},
+        #     "session": {},
+        # },
+        # {
+        #     "exp": {"name": "lower_gamma"},
+        #     "agent": {
+        #         "actor": {},
+        #         "critic": {},
+        #         "world_model": {},
+        #         "gamma": 0.95
+        #     },
+        #     "env": {},
+        #     "session": {},
+        # },
+        # {
+        #     "exp": {"name": "large_nets"},
+        #     "agent": {
+        #         "actor": {"layers": [128, 128, 64]},
+        #         "critic": {"layers": [128, 128]},
+        #         "world_model": {"hidden_channels": [32, 64], "kernel_sizes": [7, 5]}
+        #     },
+        #     "env": {},
+        #     "session": {},
+        # },
+        {
+            "exp": {"name": "large_nets_larger_lr"},
+            "agent": {
+                "actor": {"lr": 4e-5, "layers": [128, 128, 64]},
+                "critic": {"lr": 2e-5, "layers": [128, 128]},
+                "world_model": {"hidden_channels": [32, 64], "kernel_sizes": [7, 5]}
+            },
+            "env": {},
+            "session": {},
+        },
     ]
 
     base_results_dir = "experiments/cnn"
