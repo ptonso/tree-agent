@@ -7,6 +7,7 @@ from typing import List, Tuple, Dict, Optional
 
 from src.agent.actor import Actor
 from src.agent.critic import Critic
+from src.agent.world_model import WorldModel
 from src.agent.structures import State, Action
 from src.agent.trajectory import Trajectory
 from src.agent.batch import Batch, BatchTensors
@@ -14,18 +15,15 @@ from src.agent.batch import Batch, BatchTensors
 class Agent:
     def __init__(
             self, 
-            state_dim: Tuple[int, ...], # (C, H, W)
             action_dim: int, 
             config: object
         ):
         self.device = config.device
-        self.state_dim = state_dim
         self.action_dim = action_dim
+        self.state_dim = config.agent.world_model.latent_dim
         self.config = config
         self.gamma = config.agent.gamma
-        self.setup()
 
-    def setup(self):
         self.actor = Actor(
             state_dim=self.state_dim,
             action_dim=3,
@@ -37,25 +35,25 @@ class Agent:
             config=self.config
         ).to(self.device)
 
-        self.actor_optimizer = torch.optim.Adam(
-            self.actor.parameters(),
-            lr=self.config.agent.actor.lr
-        )
+        self.world_model = WorldModel(
+            config=self.config,
+            critic=self.critic
+        ).to(self.device)
 
-        self.critic_optimizer = torch.optim.Adam(
-            self.critic.parameters(),
-            lr=self.config.agent.critic.lr
-        )
+
 
     def policy(self, state: State) -> Action:
-        """Select action based on current policy"""
+        """
+        Select action based on current policy.
+        State: encoded state [B, E*2]
+        """
         with torch.no_grad():
-            action_probs = self.actor(state.as_tensor) # (7,)
+            action_probs = self.actor(state.as_tensor) # (B, 7)
             action_dist = torch.distributions.Categorical(action_probs)
             discrete_action = action_dist.sample().item()
 
         return Action(
-            action_probs=action_probs,        # (3,)
+            action_probs=action_probs,        # (B, 3)
             sampled_action = discrete_action, # int
             device=self.device
         )
@@ -99,7 +97,7 @@ class Agent:
                     param.grad *= clip_value / (grad_norm + eps)
 
 
-    def train(
+    def train_step(
             self,
             trajectories: List[Trajectory],
             logger: Optional[object] = None,
@@ -109,6 +107,7 @@ class Agent:
         batch = Batch(trajectories, self.device)
         tensors = batch.tensors
         N = tensors.states.size(0)
+        self.mb_size = self.config.agent.mb_size
 
 
         state_values_full, next_state_values_full,advantages_full = \
@@ -119,8 +118,8 @@ class Agent:
         sum_actor_loss, sum_critic_loss, sum_total_loss = 0.0, 0.0, 0.0
         count_samples = 0
 
-        for start in range(0, N, self.config.agent.mini_batch_size):
-            end = start + self.config.agent.mini_batch_size
+        for start in range(0, N, self.mb_size):
+            end = start + self.mb_size
             mb_idx = indices[start:end]
 
             mb_states, mb_actions, mb_returns, mb_adv, mb_masks = \
@@ -134,14 +133,17 @@ class Agent:
             critic_loss = critic_loss * mb_masks.mean()
             total_loss = actor_loss + critic_loss
 
-            self.actor_optimizer.zero_grad()
-            self.critic_optimizer.zero_grad()
+            self.actor.optimizer.zero_grad()
+            self.critic.optimizer.zero_grad()
             total_loss.backward()
 
-            self.adaptive_gradient_clipping(list(self.actor.parameters()) + list(self.critic.parameters()))
+            self.adaptive_gradient_clipping(
+                list(self.actor.parameters()) + 
+                list(self.critic.parameters())
+                )
         
-            self.actor_optimizer.step()
-            self.critic_optimizer.step()
+            self.actor.optimizer.step()
+            self.critic.optimizer.step()
 
             batch_size_this = (end - start)
             sum_actor_loss  += actor_loss.item()  * batch_size_this
@@ -175,10 +177,10 @@ class Agent:
         state_values_full = torch.zeros(N, 1, device=self.device)
         next_state_values_full = torch.zeros(N, 1, device=self.device)
 
-        mini_batch_size = self.config.agent.mini_batch_size
+        mb_size = self.config.agent.mb_size
         
-        for start in range(0, N, mini_batch_size):
-            end = start + mini_batch_size
+        for start in range(0, N, mb_size):
+            end = start + mb_size
             mb_states = tensors.states[start:end]
             mb_next_states = tensors.next_states[start:end]
             with torch.no_grad():
@@ -198,6 +200,52 @@ class Agent:
             advantages_full[valid_mask] = (valid_advantages - mean_adv) / std_adv
 
         return state_values_full, next_state_values_full, advantages_full
+    
+
+    # def _setup_values_and_advantage(self, tensors: BatchTensors):
+    #     """
+    #     1) Compute state_values and next_state_values in smaller chunks if needed.
+    #     2) Compute advantages = returns - state_values (masking out invalid).
+    #     3) Standardize advantages (only on valid entries).
+    #     4) Return the full-size tensors for state_values, next_state_values, advantages.
+    #     """
+    #     N = tensors.states.size(0)
+
+    #     state_values_full = torch.zeros(N, 1, device=self.device)
+    #     next_state_values_full = torch.zeros(N, 1, device=self.device)
+
+    #     mini_batch_size = self.config.agent.mini_batch_size
+        
+    #     for start in range(0, N, mini_batch_size):
+    #         end = start + mini_batch_size
+    #         mb_states = tensors.states[start:end]
+    #         mb_next_states = tensors.next_states[start:end]
+    #         with torch.no_grad():
+    #             sv  = self.critic(mb_states)
+    #             nsv = self.critic(mb_next_states)
+    #         state_values_full[start:end]      = sv
+    #         next_state_values_full[start:end] = nsv
+
+    #     normalized_returns = self._normalize_returns(tensors)
+    #     advantages_full = (normalized_returns - state_values_full) * tensors.masks.unsqueeze(-1)
+    #     return state_values_full, next_state_values_full, advantages_full
+
+
+    def _normalize_returns(
+        self,
+        tensors: BatchTensors
+    ) -> torch.tensor:
+        valid_mask = (tensors.masks > 0).unsqueeze(-1)
+        valid_returns = tensors.returns.unsqueeze(-1)[valid_mask]
+        if valid_returns.numel() > 1:
+            min_return = torch.quantile(valid_returns, 0.05)
+            max_return = torch.quantile(valid_returns, 0.95)
+            return_range = max_return - min_return
+            return_range = torch.clamp(return_range, min=1.0) # Prevent zero division
+            normalized_returns = (tensors.returns.unsqueeze(-1) - min_return) / return_range
+        else:
+            normalized_returns = tensors.returns.unsqueeze(-1)
+        return normalized_returns
 
 
     def _setup_minibatch(

@@ -5,8 +5,8 @@ from src.run.config import Config, SessionConfig, EnvConfig, ExpConfig
 
 
 def main():
-    rendered_main()
-    # single_exp_main()
+    # rendered_main()
+    single_exp_main()
     # multi_exp_main()
     pass
 
@@ -19,6 +19,7 @@ def rendered_main():
             n_steps=1000,
             seed=42,
             render=True,
+            vae_vis=True,
         ),
     env=EnvConfig(
             width=80,
@@ -35,14 +36,15 @@ def rendered_main():
 def single_exp_main():
     config = Config(
         exp=ExpConfig(
-            name="cnn",
+            name="vae_triplet_loss",
             n_runs=3
         ),
         session=SessionConfig(
             n_episodes=500,
             n_steps=1000,
             seed=42,
-            render=True
+            render=False,
+            vae_vis=True,
         )
     )
     experiment = Experiment(config, base_dir="experiments")

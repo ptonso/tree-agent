@@ -1,95 +1,142 @@
-import cv2
 import numpy as np
+import cv2
 import matplotlib.cm as cm
-from typing import Optional, List
-from src.agent.structures import Action
-from src.run.config import Config
+from typing import List
 
-class IntegratedVisualizer:
-    def __init__(self, config: Config, action_labels: Optional[List[str]] = None):
-        """Initialize visualizer with combined game and action probability display.
-        
-        Args:
-            action_labels: List of action names to display
+class AutoencoderVisualizer:
+    def __init__(self, 
+                 target_width=760, 
+                 target_height=480, 
+                 embed_width=40, 
+                 row_spacing=20,
+                 obs_embed_spacing=15,
+                 embed_column_spacing=3,
+                 window_name="Autoencoder Predictions"):
         """
-        self.config = config
-        self.action_labels = action_labels or ['Forward', 'Turn Left', 'Turn Right']
-        self.action_dim = len(self.action_labels)
-        
-        # Colors for action probability bars (in BGR)
-        self.colors = [
-            (128, 128, 78),  # Teal
-            (108, 128, 128),  # Blue-green
-            (108, 108, 158)   # Purple-blue
-        ]
-
-        self.highlight_color = (0, 165, 255)
-        
-    def create_action_overlay(self, 
-                              action_probs: np.ndarray, 
-                              sampled_action: int, 
-                              ) -> np.ndarray:
-        """Create visualization of action probabilities.
-        
+        Initialize visualizer with specific dimensions.
         Args:
-            action_probs: (action_dim,)
-            sampled_action: Index of the selected action
-            width: Width of the overlay
-            height: Height of the overlay
-        Returns:
-            np.ndarray: BGR image array of shape (height, width, 3)
+            target_width: Target width for the full visualization (default: 760px)
+            target_height: Target height for the full visualization (default: 480px)
+            embed_width: Width of the embedding visualization (20px per column)
+            row_spacing: Pixels between rows (default: 20px)
+            obs_embed_spacing: Pixels between observation and embedding (default: 15px)
+            embed_column_spacing: Pixels between mu and logvar columns (default: 3px)
         """
-        width = self.config.env.render_width
-        height = self.config.env.render_height // 4
-        overlay = np.ones((height, width, 3), dtype=np.uint8) * 255 # white bg
+        self.target_width = target_width
+        self.target_height = target_height
+        self.embed_width = embed_width // 2  # Split between mu and logvar
+        self.row_spacing = row_spacing
+        self.obs_embed_spacing = obs_embed_spacing
+        self.embed_column_spacing = embed_column_spacing
+        self.window_name = window_name
         
-        label_height = 20
-        spacing = 10
-        box_height = height - label_height - 2 * spacing
-        box_width = (width - spacing * (self.action_dim + 1)) // self.action_dim
+        total_spacing = (self.obs_embed_spacing * 2) + self.embed_column_spacing
+        remaining_width = target_width - embed_width - total_spacing
+        self.obs_width = remaining_width // 2
+
+    def _resize_observation(self, img):
+        """Resize observation/reconstruction to target dimensions."""
+        h, w = img.shape[:2]
+        aspect = w / h
+        new_h = min(self.target_height // 2 - self.row_spacing, self.obs_width // aspect)
+        new_w = int(new_h * aspect)
         
-        for i in range(self.action_dim):
-            prob = action_probs[i]
-
-            r, g, b, _ = cm.viridis(prob)
-            color = (int(b*255), int(g*255), int(r*255))
-
-            x1 = spacing + i * (box_width + spacing)
-            y1 = label_height + spacing
-            x2 = x1 + box_width
-            y2 = y1 + box_height
-
-            cv2.rectangle(overlay, (x1, y1), (x2, y2), color, -1)
+        if new_w > self.obs_width:
+            new_w = self.obs_width
+            new_h = int(new_w / aspect)
             
-            # Highlight selected action
-            if i == sampled_action:
-                cv2.rectangle(overlay, (x1, y1), (x2, y2), self.highlight_color, 2)
-            
-            label = f"{self.action_labels[i]}: {prob:.2f}"
-            cv2.putText(overlay, label, (x1, label_height - 5),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,0), 1, cv2.LINE_AA)
-        return overlay
+        return cv2.resize(img, (new_w, int(new_h)), interpolation=cv2.INTER_AREA)
 
-    def combine_displays(self, 
-                         game_frame: object, 
-                         action: Action
-                         ) -> np.ndarray:
-        """Combine game frame with action probability visualization.
-        Args:
-            game_frame: RGB/BGR frame from the game
-            action: Action object
+    def _create_embed_visualization(self, embed: np.ndarray, target_height: int):
         """
-        action_probs = action.as_numpy[0][:self.action_dim]
-        sampled_action = action.sampled_action
+        Creates embedding visualization with mu and logvar as separate columns with different colormaps.
+        """
+        E = embed.shape[0] // 2
+        mu, logvar = embed[:E], embed[E:]
 
-        action_overlay = self.create_action_overlay(
-            action_probs,
-            sampled_action,
-        )
+        def normalize(x):
+            min_val, max_val = x.min(), x.max()
+            return (x - min_val) / (max_val - min_val + 1e-8) if max_val > min_val else np.zeros_like(x)
+
+        mu_norm = normalize(mu)
+        logvar_norm = normalize(logvar)
+
+        # Calculate embed height (70% of observation height)
+        embed_height = int(target_height * 0.7)
+        padding_height = (target_height - embed_height) // 2
+
+        mu_vis = cv2.resize(mu_norm.reshape(-1, 1), (self.embed_width, embed_height), 
+                           interpolation=cv2.INTER_NEAREST)
+        logvar_vis = cv2.resize(logvar_norm.reshape(-1, 1), (self.embed_width, embed_height), 
+                               interpolation=cv2.INTER_NEAREST)
+
+        mu_colored = (cm.viridis(mu_vis)[:, :, :3] * 255).astype(np.uint8)
+        logvar_colored = (cm.plasma(logvar_vis)[:, :, :3] * 255).astype(np.uint8)
+
+        top_padding = np.zeros((padding_height, self.embed_width, 3), dtype=np.uint8)
+        bottom_padding = np.zeros((target_height - embed_height - padding_height, self.embed_width, 3), dtype=np.uint8)
+
+        mu_column = np.vstack([top_padding, mu_colored, bottom_padding])
+        logvar_column = np.vstack([top_padding, logvar_colored, bottom_padding])
         
-        combined_frame = np.vstack([
-            game_frame,
-            action_overlay
-        ])
+        separator = np.zeros((target_height, self.embed_column_spacing, 3), dtype=np.uint8)
         
-        return combined_frame
+        embed_vis = np.hstack([mu_column, separator, logvar_column])
+        
+        return embed_vis
+
+    def visualize(self, observations: List[np.ndarray], embeds: List[np.ndarray], x_hats: List[np.ndarray], 
+                 window_name="Autoencoder Predictions", wait_time=0):
+        """
+        Visualizes a batch of observations, embeddings, and reconstructions.
+        """
+        rows = []
+        for obs, embed, x_hat in zip(observations, embeds, x_hats):
+            obs_resized = self._resize_observation(obs)
+            x_hat_resized = self._resize_observation(x_hat)
+            
+            embed_vis = self._create_embed_visualization(embed, obs_resized.shape[0])
+            spacer = np.zeros((obs_resized.shape[0], self.obs_embed_spacing, 3), dtype=np.uint8)
+            row_vis = np.hstack([obs_resized, spacer, embed_vis, spacer, x_hat_resized])
+            
+            padding_w = max(0, (self.target_width - row_vis.shape[1]) // 2)
+            if padding_w > 0:
+                padding = np.zeros((row_vis.shape[0], padding_w, 3), dtype=np.uint8)
+                row_vis = np.hstack([padding, row_vis, padding])
+            
+            rows.append(row_vis)
+            
+            if len(observations) > 1:
+                horizontal_spacer = np.zeros((self.row_spacing, row_vis.shape[1], 3), dtype=np.uint8)
+                rows.append(horizontal_spacer)
+
+        full_vis = np.vstack(rows)
+        
+        padding_h = max(0, (self.target_height - full_vis.shape[0]) // 2)
+        if padding_h > 0:
+            padding = np.zeros((padding_h, full_vis.shape[1], 3), dtype=np.uint8)
+            full_vis = np.vstack([padding, full_vis, padding])
+
+        return full_vis
+
+
+    def render(self, observations, embeds, x_hats):
+        full_vis = self.visualize(observations, embeds, x_hats)
+        cv2.imshow(self.window_name, full_vis)
+        key = cv2.waitKey(1)
+            
+
+if __name__ == "__main__":
+    obs1 = np.random.randint(0, 256, (120, 160, 3), dtype=np.uint8)
+    obs2 = np.random.randint(0, 256, (120, 160, 3), dtype=np.uint8)
+    x_hat1 = np.random.randint(0, 256, (120, 160, 3), dtype=np.uint8)
+    x_hat2 = np.random.randint(0, 256, (120, 160, 3), dtype=np.uint8)
+    embed1 = np.random.randn(128)  # 64 mu + 64 log_sigma
+    embed2 = np.random.randn(128)
+
+    visualizer = AutoencoderVisualizer(
+        obs_embed_spacing=15,
+        embed_column_spacing=3,
+        row_spacing=20
+    )
+    visualizer.visualize([obs1, obs2], [embed1, embed2], [x_hat1, x_hat2], wait_time=0)

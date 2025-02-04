@@ -9,7 +9,9 @@ from src.env.env import LabEnvironment
 from src.run.logger import create_logger
 from src.agent.agent import Agent
 from src.agent.trajectory import Trajectory
-from src.agent.structures import State
+from src.agent.structures import Observation
+
+from src.explain.visualizer import AutoencoderVisualizer
 
 class Session:
     def __init__(self, config, logger=None):
@@ -18,6 +20,9 @@ class Session:
         self.seed = config.session.seed
         self.n_steps = config.session.n_steps
 
+        self.online_trajectories = []
+        self.replay_trajectories = []
+
         if logger is None:
             log_file = os.path.join("session_log.txt")
             self.logger = create_logger(log_file, logger_name="Session")
@@ -25,59 +30,89 @@ class Session:
 
     def run_episode(self, episode_id: int = 0) -> float:
         """Run single episode"""
-        self.trajectory = Trajectory(device=self.config.device, trajectory_id=episode_id, gamma=self.config.agent.gamma)
-        observation = self.env.reset(seed=self.seed + episode_id)
+        trajectory = Trajectory(
+            device=self.config.device, 
+            trajectory_id=episode_id,
+            gamma=self.config.agent.gamma)
+        
+        obs_data = self.env.reset(seed=self.seed + episode_id)
+        observation = Observation.from_env(obs_data, device=self.config.device)
 
         episode_reward = 0.
         done = False
         
-        state = State.from_observation(observation, device=self.config.device)
-
         for step in range(self.n_steps):
+            state = self.agent.world_model.encode(observation)
             action = self.agent.policy(state)
-            next_observation, reward, done = self.env.step(action.as_lab)
-            next_state = State.from_observation(next_observation, device=self.config.device)
+
+            next_obs_data, reward, done = self.env.step(action.as_lab)
+            next_observation = Observation.from_env(next_obs_data, device=self.config.device)
+            next_state = self.agent.world_model.encode(next_observation)
+
             episode_reward += reward
 
             if self.config.session.render:
-                self.env.render(next_observation, action)
+                self.env.render(observation.for_render, action)
 
-            self.trajectory.append(
+            if self.config.session.vae_vis and step % 100 == 0:
+                with torch.no_grad():
+                    x_hat = self.agent.world_model.decode(state)
+                    self.vis.render([observation.for_render], [state.for_render], [x_hat.for_render])
+
+
+            trajectory.append(
                 state.state_data,
                 action.sampled_action,
                 reward,
                 done,
-                next_state.state_data
+                next_state.state_data,
+                observation.obs_data,
+                next_observation.obs_data,
             )
 
             if done:
-                observation = self.env.reset()
-                state = State.from_observation(observation, device=self.config.device)
+                obs_data = self.env.reset()
+                observation = Observation.from_env(obs_data, device=self.config.device)
             else:
-                state = next_state
-                   
-        return episode_reward
+                observation = next_observation
+
+        return episode_reward, trajectory
     
 
-    def run(self, batch_size: int = 4) -> List[float]:
+    def run(self) -> List[float]:
         """Run multiple episodes collecting experience and training in batches"""
         total_rewards = []
-        trajectory_buffer = []
+
+        WORLD_MODEL_TRAJECTORIES_IN_BATCH = 1
+        ACTOR_CRITIC_TRAJECTORIES_IN_BATCH = 4
 
         for episode in range(self.config.session.n_episodes):
-            episode_reward = self.run_episode(episode)
+            episode_reward, trajectory = self.run_episode(episode)
             total_rewards.append(episode_reward)
-            trajectory_buffer.append(self.trajectory)
+            self.online_trajectories.append(trajectory)
 
+            self.logger.info("-"*35)
             self.logger.info(f"Episode {episode + 1:03d}: Total Reward = {episode_reward}")
+            self.logger.info("-"*35)
 
-            if (episode + 1) % batch_size == 0:
-                self.logger.info(f"Training on batch of {len(trajectory_buffer)} trajectories")
-                self.agent.train(trajectory_buffer, logger=self.logger)
-                trajectory_buffer = []
+            if len(self.online_trajectories) >= WORLD_MODEL_TRAJECTORIES_IN_BATCH:
+                self.agent.world_model.train_step(self.online_trajectories, logger=self.logger)
+                self.transfer_to_replay(self.online_trajectories)
+                self.online_trajectories = []
+
+            if len(self.replay_trajectories) >= ACTOR_CRITIC_TRAJECTORIES_IN_BATCH:
+                self.agent.train_step(self.replay_trajectories, logger=self.logger)
+                self.replay_trajectories = []
 
         self.env.close()
         return total_rewards
+
+    def transfer_to_replay(self, trajectories: List[Trajectory]):
+        """Convert online trajectories to replay buffer."""
+        for traj in trajectories:
+            traj.observations = None
+            traj.next_observations = None
+            self.replay_trajectories.append(traj)
 
 
     def setup(self):
@@ -87,15 +122,12 @@ class Session:
         self.env = LabEnvironment(config=self.config)
         observation = self.env.reset(seed=self.seed)
 
-        H, W, C = observation.shape
-        state_dim = (C, H, W)
         action_dim = self.env.action_space
 
-        self.agent = Agent(
-            state_dim,
-            action_dim,
-            config=self.config
-        )
+        self.agent = Agent(action_dim, config=self.config)
+
+        self.vis = AutoencoderVisualizer()
+
         self.logger.info("Session setup complete.")
 
 

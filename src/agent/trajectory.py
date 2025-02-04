@@ -4,7 +4,7 @@ import torch
 from dataclasses import dataclass
 from typing import List, Optional
 
-from src.agent.structures import State, Action
+from src.agent.structures import State, Action, Observation
 
 @dataclass
 class TrajectoryData:
@@ -15,19 +15,23 @@ class TrajectoryData:
     rewards: np.ndarray     # Shape: [T]
     dones: np.ndarray       # Shape: [T]
     next_states: np.ndarray # Shape: [T, *state_shape]
-    returns: Optional[np.ndarray] = None    # Shape: [T]
-    advantages: Optional[np.ndarray] = None # Shape: [T]
+    returns: Optional[np.ndarray] = None       # Shape: [T]
+    advantages: Optional[np.ndarray] = None    # Shape: [T]
+    observations: Optional[np.ndarray] = None       # Shape: [T, H, W, C]
+    next_observations: Optional[np.ndarray] = None  # Shape: [T, H, W, C]
 
 
 class Trajectory:
     """Active trajectory being collected, with methods for adding steps and computing returns.
     Can be initialized empty for collection or from TrajectoryData for modification"""
     def __init__(self, device: str, trajectory_id: int = 0, gamma: float = 0.997):
-        self.states:      List[np.ndarray] = []
-        self.actions:     List[int] = []
-        self.rewards:     List[float] = []
-        self.dones:       List[bool] = []
-        self.next_states: List[np.ndarray] = []
+        self.states:           List[np.ndarray] = []
+        self.actions:          List[int] = []
+        self.rewards:          List[float] = []
+        self.dones:            List[bool] = []
+        self.next_states:      List[np.ndarray] = []
+        self.observations:      List[np.ndarray] = []
+        self.next_observations: List[np.ndarray] = []
     
         self.trajectory_id = trajectory_id
         self.device = device
@@ -41,6 +45,8 @@ class Trajectory:
         trajectory.rewards = trajectory_data.rewards.tolist()
         trajectory.dones = trajectory_data.dones.tolist()
         trajectory.next_states = [state for state in trajectory_data.next_states]
+        trajectory.observations = [obs for obs in trajectory_data.observations]
+        trajectory.next_observations = [obs for obs in trajectory_data.observations]
         return trajectory
 
     def append(
@@ -49,13 +55,17 @@ class Trajectory:
             action: int,
             reward: float,
             done: bool,
-            next_state: np.ndarray
-        ) -> None:
+            next_state: np.ndarray,
+            observation: np.ndarray,
+            next_observation: np.ndarray,
+        ):
         self.states.append(state)
         self.actions.append(action)
         self.rewards.append(reward)
         self.dones.append(done)
         self.next_states.append(next_state)
+        self.observations.append(observation)
+        self.next_observations.append(next_observation)
 
     def reset(self) -> None:
         self.states.clear()
@@ -63,6 +73,8 @@ class Trajectory:
         self.rewards.clear()
         self.dones.clear()
         self.next_states.clear()
+        self.observations.clear()
+        self.next_observations.clear()
 
     def compute_returns(self) -> np.ndarray:
         """Compute discounted returns for the trajectory."""
@@ -80,7 +92,9 @@ class Trajectory:
             actions=np.array(self.actions),
             rewards=np.array(self.rewards),
             dones=np.array(self.dones),
-            next_states=np.stack(self.next_states)
+            next_states=np.stack(self.next_states),
+            observations=np.stack(self.observations),
+            next_observations=np.stack(self.next_observations),
         )
         # trajectory_data.returns = self.compute_returns()
         return trajectory_data
@@ -92,17 +106,31 @@ class Trajectory:
         states = [State(st, device=self.device) for st in self.states]
         next_states = [State(st, device=self.device) for st in self.next_states]
         actions = [Action(sampled_action=act, device=self.device) for act in self.actions]
-        return states, actions, self.rewards, next_states, self.dones, self.compute_returns() 
+        
+        observations = None
+        next_observations = None
+        if self.observations is not None:
+            observations = [Observation(obs, device=self.device) for obs in self.observations]
+            next_observations = [Observation(obs, device=self.device) for obs in self.next_observations]
+        return states, actions, self.rewards, next_states, self.dones, self.compute_returns(), observations, next_observations
+
 
     def get_tensors(self):
-        states, actions, rewards, next_states, dones, returns = self.get_instances()
+        states, actions, rewards, next_states, dones, returns, observations, next_observations = self.get_instances()
 
-        states_tensor = torch.cat([s.as_tensor for s in states], dim=0)
+        states_tensor = torch.cat([s.as_tensor for s in states], dim=0) 
         actions_tensor = torch.tensor(self.actions, dtype=torch.long, device=self.device)
-        rewards_tensor = torch.tensor(rewards, dtype=torch.float32).to(self.device)
+        rewards_tensor = torch.tensor(rewards, dtype=torch.float32, device=self.device)
         next_states_tensor = torch.cat([s.as_tensor for s in next_states], dim=0)
-        dones_tensor = torch.tensor(dones, dtype=torch.float32).to(self.device)
-        returns_tensor = torch.tensor(returns, dtype=torch.float32).to(self.device)
+        dones_tensor = torch.tensor(dones, dtype=torch.float32, device=self.device)
+        returns_tensor = torch.tensor(returns, dtype=torch.float32, device=self.device)
 
-        return states_tensor, actions_tensor, rewards_tensor, next_states_tensor, dones_tensor, returns_tensor
+        if observations is not None:
+            observations_tensor = torch.cat([obs.as_tensor for obs in observations], dim=0)
+            next_observations_tensor = torch.cat([obs.as_tensor for obs in next_observations], dim=0)
+        else:
+            observations_tensor = None
+            next_observations_tensor = None
+
+        return states_tensor, actions_tensor, rewards_tensor, next_states_tensor, dones_tensor, returns_tensor, observations_tensor, next_observations_tensor
     

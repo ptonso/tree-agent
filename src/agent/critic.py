@@ -10,7 +10,7 @@ from src.agent.cnn import CNN
 class Critic(nn.Module):
     def __init__(
             self,
-            state_dim: Tuple[int, ...],
+            state_dim: int, # E*2
             config: object
             ):
         super().__init__()
@@ -18,23 +18,19 @@ class Critic(nn.Module):
         self.device = config.device
         self.state_dim = state_dim
 
-
-        self.cnn = CNN(
-            input_channels=state_dim[0],
-            config=self.config
-            )   
-
-        with torch.no_grad():
-            dummy_input = torch.zeros(1, *state_dim) # Batch size 1
-            cnn_output_dim = self.cnn(dummy_input).shape[1]
-
         self.value_network = MLP(
-            input_dim=cnn_output_dim,
+            input_dim=state_dim,
             output_dim=1,
             hidden_layers=self.config.agent.critic.layers
         )
         
+        self.optimizer = torch.optim.Adam(
+            self.parameters(),
+            lr=self.config.agent.critic.lr
+        )
+
         self._initialize_weights()
+
 
 
     def forward(self, state: torch.Tensor) -> torch.Tensor:
@@ -44,8 +40,7 @@ class Critic(nn.Module):
         Returns:
             value: (batch_size, 1)
         """
-        flattened_features = self.cnn(state)
-        return self.value_network(flattened_features)
+        return self.value_network(state)
     
 
     def _initialize_weights(self) -> None:

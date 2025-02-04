@@ -9,13 +9,15 @@ from dataclasses import is_dataclass, fields
 import matplotlib.pyplot as plt
 
 from src.run.session import Session
-from src.run.config import Config, SessionConfig
+from src.run.config import Config
 from src.run.logger import create_logger
 
 # classes for save:
 from src.agent.agent import Agent
 from src.agent.actor import Actor
 from src.agent.critic import Critic
+from src.agent.world_model import WorldModel
+
 
 class Experiment:
     """Handles multiple training runs to test a configuration/hypothesis"""
@@ -73,7 +75,8 @@ class Experiment:
         experiment_data["code"] = {
             "agent": inspect.getsource(Agent),
             "actor": inspect.getsource(Actor),
-            "critic": inspect.getsource(Critic)
+            "critic": inspect.getsource(Critic),
+            "world_model": inspect.getsource(WorldModel),
             }
         
         experiment_data["performance"] = {

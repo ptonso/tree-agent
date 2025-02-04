@@ -1,73 +1,109 @@
 import torch
 import numpy as np
-from typing import Optional
+from typing import Optional, Tuple
 
 
 class State:
-    """Wraps data in shape [B, C, H, W] for agent."""
+    """Handle (B, E) latent representations."""
     def __init__(self, state_data: np.ndarray, device: str):
         """
         Args:
-            state_data: already in (B, C, H, W) format, float32, scaled to [0..1]
+            state_data: encoded output in (B, E) format, float32, scaled to [0..1]
         """
-        self.state_data = state_data
+        self.state_data = state_data 
+        self.shape = state_data.shape # (B, E)
         self.device = device
 
         self._as_tensor: Optional[torch.Tensor] = None
-        self._as_tensor_with_grad: Optional[torch.Tensor] = None
-        self._as_flattened_tensor: Optional[torch.Tensor] = None
-
-
-    @classmethod
-    def from_observation(cls, observation: np.ndarray, device: str) -> "State":
-        """
-        Create a State from a raw observation in shape (H, W, C)
-        or (B, H, W, C).
-        """
-        if observation.ndim == 3:
-            observation = np.expand_dims(observation, axis=0)
-
-        # uint8 [0..255] -> float32 [0..1]
-        observation = observation.astype(np.float32) / 255.0
-
-        # from (B, H, W, C) to (B, C, H, W)
-        observation = np.transpose(observation, (0, 3, 1, 2))
-
-        return cls(observation, device)
-
-
-    @classmethod
-    def from_embedding(cls, embedding: np.ndarray, device: str) -> "State":
-        pass
-
-
-    @property
-    def as_numpy(self) -> np.ndarray:
-        if self._as_numpy is None:
-            self._as_numpy = self.state_data
-        return self._as_numpy
+        self._for_render: Optional[np.ndarray] = None # (E,)
+        self._mu_logvar : Optional[Tuple[np.ndarray, np.ndarray]] = None # (mu, logvar) each is (B, latent_dim)
     
     @property
     def as_tensor(self) -> torch.Tensor:
         if self._as_tensor is None:
             tensor = torch.tensor(self.state_data, dtype=torch.float32)
-            self._as_tensor = tensor.to(self.device) # (B, C, H, W)
+            self._as_tensor = tensor.to(self.device) # (B, E)
+        return self._as_tensor
+        
+    @property
+    def mu_logvar(self) -> Tuple[torch.Tensor, torch.Tensor]:
+        if self._mu_logvar is None:
+            self._mu_logvar = (self.mu, self.logvar)
+        return self._mu_logvar
+
+    @property
+    def for_render(self) -> np.ndarray:
+        if self._for_render is None:
+            self._for_render = self.state_data[0]
+        return self._for_render
+    
+    @classmethod
+    def from_encoder(cls, z: np.ndarray, mu: torch.Tensor, logvar: torch.Tensor, device: str) -> "State":
+        state = cls(z, device)
+        state.mu = mu
+        state.logvar = logvar
+        return state
+
+
+class Observation:
+    """Handle (B, C, H, W) observation."""
+    def __init__(self, obs_data: np.ndarray, device: str):
+        """
+        Args:
+            obs_data: (B, C, H, W), float32[0..1]
+        """
+        self.device = device
+        self.obs_data = obs_data
+        self.shape = obs_data.shape # (B, C, H, W)
+        self._as_tensor: Optional[torch.Tensor] = None
+        self._for_render: Optional[np.ndarray] = None # (H, W, C) raw format
+
+
+    @classmethod
+    def from_env(cls, obs_data: np.ndarray, device: str) -> "Observation":
+        """
+        Handle initialize from raw deepmind lab class
+        Params:
+         - observation : (H, W, C)"""
+        raw_obs = obs_data.copy()
+        obs_data = np.expand_dims(obs_data, axis=0)
+
+        # uint8 [0..255] -> float32[-0.5..0.5]
+        obs_data = (obs_data.astype(np.float32) / 255.0)
+        obs_data = np.clip( (obs_data - 0.5), -0.5, 0.5)
+
+        # from (B, H, W, C) to (B, C, H, W)
+        obs_data = np.transpose(obs_data, (0, 3, 1, 2))
+        instance = cls(obs_data, device)
+        instance._for_render = raw_obs
+        return instance
+
+    @classmethod
+    def from_decoder(cls, obs_data: torch.Tensor, device: str) -> "Observation":
+        """
+        initializes from decoder (B, H, W, C) float32[-0.5..0.5]
+        """
+        obs_data = obs_data.cpu().detach().numpy()
+        instance = cls(obs_data, device)
+        return instance
+
+
+    @property
+    def as_tensor(self) -> torch.Tensor:
+        if self._as_tensor is None:
+            self._as_tensor = torch.tensor(self.obs_data, dtype=torch.float32).to(self.device)
         return self._as_tensor
     
     @property
-    def as_tensor_with_grad(self) -> torch.Tensor:
-        if self._as_tensor_with_grad is None:
-            self._as_tensor_with_grad = self.as_tensor.clone().detach().requires_grad_(True)
-        return self._as_tensor_with_grad
-    
-    @property
-    def as_flattened_tensor(self) -> torch.Tensor:
-        if self._as_flattened_tensor is None:
-            tensor = self.as_tensor.contiguous()
-            batch_size = tensor.shape[0]
-            self._as_flattened_tensor = tensor.view(batch_size, -1) # (B, C*H*W)
-        return self._as_flattened_tensor
-
+    def for_render(self) -> np.ndarray:
+        """
+        generate (H, W, C) uint8[0..255] image 
+        """
+        if self._for_render is None:
+            img = np.transpose(self.obs_data[0], (1,2,0))
+            img = (img + 0.5) * 255.
+            self._for_render = np.clip(img, 0, 255).astype(np.uint8)
+        return self._for_render
 
 
 class Action:
