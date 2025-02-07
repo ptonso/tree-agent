@@ -43,7 +43,7 @@ class State:
         state.mu = mu
         state.logvar = logvar
         return state
-
+    
 
 class Observation:
     """Handle (B, C, H, W) observation."""
@@ -66,6 +66,7 @@ class Observation:
         Params:
          - observation : (H, W, C)"""
         raw_obs = obs_data.copy()
+
         obs_data = np.expand_dims(obs_data, axis=0)
 
         # uint8 [0..255] -> float32[-0.5..0.5]
@@ -74,6 +75,7 @@ class Observation:
 
         # from (B, H, W, C) to (B, C, H, W)
         obs_data = np.transpose(obs_data, (0, 3, 1, 2))
+
         instance = cls(obs_data, device)
         instance._for_render = raw_obs
         return instance
@@ -86,7 +88,6 @@ class Observation:
         obs_data = obs_data.cpu().detach().numpy()
         instance = cls(obs_data, device)
         return instance
-
 
     @property
     def as_tensor(self) -> torch.Tensor:

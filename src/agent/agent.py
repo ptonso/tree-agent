@@ -1,9 +1,7 @@
-import numpy as np
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 
-from typing import List, Tuple, Dict, Optional
+from typing import List, Tuple, Dict, Optional, Union
 
 from src.agent.actor import Actor
 from src.agent.critic import Critic
@@ -16,11 +14,12 @@ class Agent:
     def __init__(
             self, 
             action_dim: int, 
+            state_dim: Union[Tuple[int, ...], int],
             config: object
         ):
         self.device = config.device
         self.action_dim = action_dim
-        self.state_dim = config.agent.world_model.latent_dim
+        self.state_dim = state_dim
         self.config = config
         self.gamma = config.agent.gamma
 
@@ -39,7 +38,6 @@ class Agent:
             config=self.config,
             critic=self.critic
         ).to(self.device)
-
 
 
     def policy(self, state: State) -> Action:
@@ -145,6 +143,10 @@ class Agent:
             self.actor.optimizer.step()
             self.critic.optimizer.step()
 
+
+            del mb_state_values, mb_states, mb_actions, mb_returns
+            torch.cuda.empty_cache()
+
             batch_size_this = (end - start)
             sum_actor_loss  += actor_loss.item()  * batch_size_this
             sum_critic_loss += critic_loss.item() * batch_size_this
@@ -159,8 +161,8 @@ class Agent:
         )
 
         if logger is not None:
-            logger.info(f"Actor Loss: {metrics['actor_loss']:.4f}")
-            logger.info(f"Critic Loss: {metrics['critic_loss']:.4f}")
+            logger.info(f"Actor Loss: {metrics['avg_actor_loss']:.4f}")
+            logger.info(f"Critic Loss: {metrics['avg_critic_loss']:.4f}")
 
         return metrics
 
@@ -297,18 +299,23 @@ class Agent:
         valid_returns = tensors.returns[valid_mask_1d]
         valid_adv     = advantages_full[valid_mask_1d]
 
-        metrics = {
-            'actor_loss': actor_loss_avg,
-            'critic_loss': critic_loss_avg,
-            'total_loss': total_loss_avg,
-            'mean_value': valid_values.mean().item() if valid_values.numel() > 0 else 0.0,
-            'mean_return': valid_returns.mean().item() if valid_returns.numel() > 0 else 0.0,
-            'mean_advantage': valid_adv.mean().item() if valid_adv.numel() > 0 else 0.0,
+        agent_metrics = {
+            'avg_actor_loss': actor_loss_avg,
+            'avg_critic_loss': critic_loss_avg,
+            'avg_total_loss': total_loss_avg,
+            'avg_value': valid_values.mean().item() if valid_values.numel() > 0 else 0.0,
+            'avg_return': valid_returns.mean().item() if valid_returns.numel() > 0 else 0.0,
+            'avg_advantage': valid_adv.mean().item() if valid_adv.numel() > 0 else 0.0,
             'num_trajectories': len(tensors.trajectory_lengths),
-            'max_trajectory_length': max(tensors.trajectory_lengths),
-            'min_trajectory_length': min(tensors.trajectory_lengths)
         }
-        return metrics
+
+        agent_metrics = {
+            key: value.detach().cpu().item() if torch.is_tensor(value) else value
+            for key, value in agent_metrics.items()
+        }
+
+
+        return agent_metrics
 
 
 

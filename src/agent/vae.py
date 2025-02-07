@@ -4,65 +4,25 @@ import torch.nn.functional as F
 
 from src.run.config import EncoderConfig, DecoderConfig, WorldModelConfig
 
-class RMSNorm(nn.Module):
-    def __init__(self, dim: int, eps: float = 1e-8):
-        super().__init__()
-        self.weight = nn.Parameter(torch.ones(dim))
-        self.eps = eps
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Applies RMS normalization over the channel dimension."""
-        if x.dim() == 4:    # (B, C, H, W)
-            var = x.pow(2).mean(dim=(1,), keepdim=True)  # Normalize per channel
-            return x / torch.sqrt(var + self.eps) * self.weight.view(1, -1, 1, 1)
-        elif x.dim() == 2:  # (B, Features)
-            var = x.pow(2).mean(dim=-1, keepdim=True)  # Normalize per feature
-            return x / torch.sqrt(var + self.eps) * self.weight
-        else:
-            raise ValueError(f"Unexpected input shape {x.shape} for RMSNorm.")
-        
-class Norm(nn.Module):
-    def __init__(self, norm_type: str, num_channels: int):
-        super().__init__()
-        self.norm_type = norm_type.lower()
-        if self.norm_type == "layer":
-            self.norm = nn.LayerNorm(num_channels)
-        elif self.norm_type == "batch":
-            self.norm = nn.BatchNorm2d(num_channels)
-        elif self.norm_type == "group":
-            self.norm = nn.GroupNorm(32, num_channels)
-        elif self.norm_type == "rms":
-            self.norm = RMSNorm(num_channels)
-        else:
-            self.norm = nn.Identity()
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if self.norm_type == "layer" and x.dim() == 4:
-            b,c,h,w = x.shape
-            x = x.permute(0,2,3,1) # (B, C, H, W) -> (B, H, W, C)
-            x = self.norm(x)
-            x = x.permute(0,3,1,2) # Back to (B, C, H, W)
-            return x
-        else:
-            return self.norm(x)
-
-def truncated_normal_(tensor: torch.Tensor, mean=0.0, std=0.02):
-    with torch.no_grad():
-        tensor.normal_(mean, std)
-        while True:
-            invalid = (tensor < mean - 2*std) | (tensor > mean + 2*std)
-            if not invalid.any():
-                break
-            tensor[invalid] = torch.randn_like(tensor[invalid]) * std + mean
-
-
 class BaseVAE(nn.Module):
     def __init__(self):
         super().__init__()
     def _init_weights(self, m: nn.Module):
         if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d) or isinstance(m, nn.Linear):
-            truncated_normal_(m.weight, 0.0, 0.02)
+            BaseVAE.truncated_normal_(m.weight, 0.0, 0.02)
             if m.bias is not None:
                 nn.init.zeros_(m.bias)
+
+    @staticmethod
+    def truncated_normal_(tensor: torch.Tensor, mean=0.0, std=0.02):
+        with torch.no_grad():
+            tensor.normal_(mean, std)
+            while True:
+                invalid = (tensor < mean - 2*std) | (tensor > mean + 2*std)
+                if not invalid.any():
+                    break
+                tensor[invalid] = torch.randn_like(tensor[invalid]) * std + mean
+
 
 def make_activation(name: str) -> nn.Module:
     if name.lower() == "silu":
@@ -158,6 +118,49 @@ class Decoder(BaseVAE):
         x = self.deconv(x)
         x = F.interpolate(x, size=(self.out_height, self.out_width), mode='bilinear', align_corners=False)
         return x
+    
+
+class RMSNorm(nn.Module):
+    def __init__(self, dim: int, eps: float = 1e-8):
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(dim))
+        self.eps = eps
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Applies RMS normalization over the channel dimension."""
+        if x.dim() == 4:    # (B, C, H, W)
+            var = x.pow(2).mean(dim=(1,), keepdim=True)  # Normalize per channel
+            return x / torch.sqrt(var + self.eps) * self.weight.view(1, -1, 1, 1)
+        elif x.dim() == 2:  # (B, Features)
+            var = x.pow(2).mean(dim=-1, keepdim=True)  # Normalize per feature
+            return x / torch.sqrt(var + self.eps) * self.weight
+        else:
+            raise ValueError(f"Unexpected input shape {x.shape} for RMSNorm.")
+        
+class Norm(nn.Module):
+    def __init__(self, norm_type: str, num_channels: int):
+        super().__init__()
+        self.norm_type = norm_type.lower()
+        if self.norm_type == "layer":
+            self.norm = nn.LayerNorm(num_channels)
+        elif self.norm_type == "batch":
+            self.norm = nn.BatchNorm2d(num_channels)
+        elif self.norm_type == "group":
+            self.norm = nn.GroupNorm(32, num_channels)
+        elif self.norm_type == "rms":
+            self.norm = RMSNorm(num_channels)
+        else:
+            self.norm = nn.Identity()
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.norm_type == "layer" and x.dim() == 4:
+            b,c,h,w = x.shape
+            x = x.permute(0,2,3,1) # (B, C, H, W) -> (B, H, W, C)
+            x = self.norm(x)
+            x = x.permute(0,3,1,2) # Back to (B, C, H, W)
+            return x
+        else:
+            return self.norm(x)
+
 
 
 if __name__ == "__main__":

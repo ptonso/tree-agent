@@ -1,17 +1,17 @@
 import numpy as np
 import cv2
 import matplotlib.cm as cm
-from typing import List
+from typing import List, Optional
 
 class AutoencoderVisualizer:
     def __init__(self, 
-                 target_width=760, 
-                 target_height=480, 
-                 embed_width=40, 
-                 row_spacing=20,
-                 obs_embed_spacing=15,
-                 embed_column_spacing=3,
-                 window_name="Autoencoder Predictions"):
+                 target_width: int = 760, 
+                 target_height: int = 480, 
+                 embed_width: int = 40, 
+                 row_spacing: int = 20,
+                 obs_embed_spacing: int = 15,
+                 embed_column_spacing: int = 3,
+                 window_name: str = "Autoencoder Predictions"):
         """
         Initialize visualizer with specific dimensions.
         Args:
@@ -34,7 +34,7 @@ class AutoencoderVisualizer:
         remaining_width = target_width - embed_width - total_spacing
         self.obs_width = remaining_width // 2
 
-    def _resize_observation(self, img):
+    def _resize_observation(self, img: np.ndarray) -> np.ndarray:
         """Resize observation/reconstruction to target dimensions."""
         h, w = img.shape[:2]
         aspect = w / h
@@ -47,14 +47,14 @@ class AutoencoderVisualizer:
             
         return cv2.resize(img, (new_w, int(new_h)), interpolation=cv2.INTER_AREA)
 
-    def _create_embed_visualization(self, embed: np.ndarray, target_height: int):
+    def _create_embed_visualization(self, embed: np.ndarray, target_height: int) -> np.ndarray:
         """
         Creates embedding visualization with mu and logvar as separate columns with different colormaps.
         """
         E = embed.shape[0] // 2
         mu, logvar = embed[:E], embed[E:]
 
-        def normalize(x):
+        def normalize(x: np.ndarray) -> np.ndarray:
             min_val, max_val = x.min(), x.max()
             return (x - min_val) / (max_val - min_val + 1e-8) if max_val > min_val else np.zeros_like(x)
 
@@ -85,16 +85,29 @@ class AutoencoderVisualizer:
         
         return embed_vis
 
-    def visualize(self, observations: List[np.ndarray], embeds: List[np.ndarray], x_hats: List[np.ndarray], 
-                 window_name="Autoencoder Predictions", wait_time=0):
+    def visualize(
+            self, 
+            observations: List[np.ndarray], 
+            embeds: List[np.ndarray], 
+            x_hats: List[np.ndarray], 
+            obs_saliencies: Optional[List[np.ndarray]], 
+        ) -> np.ndarray:
         """
         Visualizes a batch of observations, embeddings, and reconstructions.
         """
         rows = []
-        for obs, embed, x_hat in zip(observations, embeds, x_hats):
+        for i, (obs, embed, x_hat) in enumerate(zip(observations, embeds, x_hats)):
             obs_resized = self._resize_observation(obs)
             x_hat_resized = self._resize_observation(x_hat)
             
+            if obs_saliencies is not None and obs_saliencies[i] is not None:
+                saliency_resized = cv2.resize(obs_saliencies[i], obs_resized.shape[1::-1], interpolation=cv2.INTER_NEAREST)
+                
+                saliency_resized = saliency_resized.mean(axis=-1) # Convert (H,W,3) -> (H,W)
+                saliency_resized = (saliency_resized - saliency_resized.min()) / (saliency_resized.max() - saliency_resized.min() + 1e-8)
+                saliency_colored = (cm.jet(saliency_resized)[:, :, :3] * 255).astype(np.uint8)
+                obs_resized = cv2.addWeighted(obs_resized, 0.85, saliency_colored, 0.15, 0)
+
             embed_vis = self._create_embed_visualization(embed, obs_resized.shape[0])
             spacer = np.zeros((obs_resized.shape[0], self.obs_embed_spacing, 3), dtype=np.uint8)
             row_vis = np.hstack([obs_resized, spacer, embed_vis, spacer, x_hat_resized])
@@ -120,10 +133,16 @@ class AutoencoderVisualizer:
         return full_vis
 
 
-    def render(self, observations, embeds, x_hats):
-        full_vis = self.visualize(observations, embeds, x_hats)
+    def render(
+            self, 
+            observations: List[np.ndarray], 
+            embeds: List[np.ndarray], 
+            x_hats: List[np.ndarray],
+            obs_saliencies: Optional[List[np.ndarray]] = None
+        ) -> None:
+        full_vis = self.visualize(observations, embeds, x_hats, obs_saliencies)
         cv2.imshow(self.window_name, full_vis)
-        key = cv2.waitKey(1)
+        cv2.waitKey(1)
             
 
 if __name__ == "__main__":

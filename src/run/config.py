@@ -13,63 +13,71 @@ class EnvConfig:
     num_steps:      int  = 4
     render_width:   int  = 780
     render_height:  int  = 480
+    action_dim:     int  = 7
 
 
 @dataclass
 class EncoderConfig:
-    channels: List[int]  = field(default_factory=lambda: [32, 64, 128])
-    kernels:  List[int]  = field(default_factory=lambda: [4, 4, 4])
-    strides:  List[int]  = field(default_factory=lambda: [2, 2, 1])
-    paddings: List[int]  = field(default_factory=lambda: [1, 1, 1])
-    fc_layers:  int      = 3
+    channels: List[int]  = field(default_factory=lambda: [ 32,  64, 128])
+    kernels:  List[int]  = field(default_factory=lambda: [  4,   4,   3])
+    strides:  List[int]  = field(default_factory=lambda: [  2,   2,   1])
+    paddings: List[int]  = field(default_factory=lambda: [  1,   1,   1])
+    fc_layers:  int      = 2
     fc_units:   int      = 256
     activation: str      = "silu"
     norm_type:  str      = "layer"
 
 @dataclass
 class DecoderConfig:
-    channels: List[int]  = field(default_factory=lambda: [128, 64, 32])
-    kernels:  List[int]  = field(default_factory=lambda: [4, 4, 4])
-    strides:  List[int]  = field(default_factory=lambda: [1, 1, 2])
-    paddings: List[int]  = field(default_factory=lambda: [1, 1, 1])
-    fc_layers:  int      = 3
+    channels: List[int]  = field(default_factory=lambda: [128,  64,  32])
+    kernels:  List[int]  = field(default_factory=lambda: [  4,   4,   4])
+    strides:  List[int]  = field(default_factory=lambda: [  2,   2,   1])
+    paddings: List[int]  = field(default_factory=lambda: [  1,   1,   1])
+    fc_layers:  int      = 2
     fc_units:   int      = 256
     activation: str      = "silu"
     norm_type:  str      = "layer"
+
+@dataclass
+class TransitionConfig:
+    lr: float = 1e-4
+    layers: List[int] = field(default_factory=lambda: [64, 64])
+
     
 @dataclass
 class WorldModelConfig:
-    cnn_lr:       float  = 1e-3
-    latent_dim:   int    = 128
-    n_epochs:     int    = 5
-    mb_size:      int    = 32
-    beta_pred:    float  = 1.0
-    beta_triplet: float  = 0.0
-    beta_kl:      float  = 0.0
-    beta_reward:  float  = 0.0
-    beta_value:   float  = 0.0
-    free_nats:    float  = 1.0
+    vae_lr:       float  = 2e-4
+    latent_dim:   int    = 64
+    n_epochs:     int    = 4
+    mb_size:      int    = 64
+    beta_recon:   float  = 1.00
+    beta_kl:      float  = 0.05
+    beta_reward:  float  = 0.00
+    beta_returns: float  = 0.00
+    beta_triplet: float  = 0.00
+    free_nats:    float  = 2.00
     gradient_clipping: float = 0.5
     encoder: EncoderConfig = EncoderConfig()
     decoder: DecoderConfig = DecoderConfig()
+    transition: TransitionConfig = TransitionConfig()
 
 
 @dataclass
 class ActorConfig:
-    lr: float = 2e-5
-    layers: List[int] = field(default_factory=lambda: [32, 32])
+    lr: float = 3e-5
+    layers: List[int] = field(default_factory=lambda: [64, 64])
 
 @dataclass
 class CriticConfig:
-    lr: float = 1e-5
-    layers: List[int] = field(default_factory=lambda: [64])
+    lr: float = 2e-5
+    layers: List[int] = field(default_factory=lambda: [128])
 
 @dataclass
 class AgentConfig:
     gamma:        float = 0.99
     entropy_coef: float = 0.05
     verbose_train: bool = True
-    mb_size:       int  = 512
+    mb_size:       int  = 64
     actor: ActorConfig  = field(default_factory=ActorConfig)
     critic: CriticConfig = field(default_factory=CriticConfig)
     world_model: WorldModelConfig = field(default_factory=WorldModelConfig)

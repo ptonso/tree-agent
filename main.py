@@ -6,8 +6,8 @@ from src.run.config import Config, SessionConfig, EnvConfig, ExpConfig
 
 def main():
     # rendered_main()
-    single_exp_main()
-    # multi_exp_main()
+    # single_exp_main()
+    multi_exp_main()
     pass
 
 
@@ -15,7 +15,7 @@ def rendered_main():
     print("[simple render] Starting session run")
     config = Config(
         session=SessionConfig(
-            n_episodes=200,
+            n_episodes=1000,
             n_steps=1000,
             seed=42,
             render=True,
@@ -36,7 +36,7 @@ def rendered_main():
 def single_exp_main():
     config = Config(
         exp=ExpConfig(
-            name="vae_triplet_loss",
+            name="test!!",
             n_runs=3
         ),
         session=SessionConfig(
@@ -55,84 +55,86 @@ def single_exp_main():
 def multi_exp_main():
     baseline_config = Config()
     baseline_config.session.render = False
+    baseline_config.session.vae_vis = False
     baseline_config.session.n_episodes = 500
 
     parametric_changes = [
-        # {
-        #     "exp": {"name": "small_nets_large_lr"},
-        #     "agent": {
-        #         "actor": {"lr": 1e-4, "layers": [32]},
-        #         "critic": {"lr": 5e-5, "layers": [32]},
-        #         "world_model": {"hidden_channels": [8, 16]}
-        #     },
-        #     "env": {},
-        #     "session": {},
-        # },
-        # {
-        #     "exp": {"name": "low_res"},
-        #     "agent": {
-        #         "actor": {},
-        #         "critic": {},
-        #         "world_model": {}
-        #     },
-        #     "env": {"width": 48, "height": 36},  # 16:12 * 3
-        #     "session": {},
-        # },
-        # {
-        #     "exp": {"name": "high_res"},
-        #     "agent": {
-        #         "actor": {},
-        #         "critic": {},
-        #         "world_model": {}
-        #     },
-        #     "env": {"width": 96, "height": 72}, # 16:12 * 6
-        #     "session": {},
-        # },
-        # {
-        #     "exp": {"name": "high_exploration"},
-        #     "agent": {
-        #         "actor": {},
-        #         "critic": {},
-        #         "world_model": {},
-        #         "entropy_coef": 0.15
-        #     },
-        #     "env": {},
-        #     "session": {},
-        # },
-        # {
-        #     "exp": {"name": "lower_gamma"},
-        #     "agent": {
-        #         "actor": {},
-        #         "critic": {},
-        #         "world_model": {},
-        #         "gamma": 0.95
-        #     },
-        #     "env": {},
-        #     "session": {},
-        # },
-        # {
-        #     "exp": {"name": "large_nets"},
-        #     "agent": {
-        #         "actor": {"layers": [128, 128, 64]},
-        #         "critic": {"layers": [128, 128]},
-        #         "world_model": {"hidden_channels": [32, 64], "kernel_sizes": [7, 5]}
-        #     },
-        #     "env": {},
-        #     "session": {},
-        # },
         {
-            "exp": {"name": "large_nets_larger_lr"},
+            "exp": {"name": "reward_loss"},
             "agent": {
-                "actor": {"lr": 4e-5, "layers": [128, 128, 64]},
-                "critic": {"lr": 2e-5, "layers": [128, 128]},
-                "world_model": {"hidden_channels": [32, 64], "kernel_sizes": [7, 5]}
+                "actor": {},
+                "critic": {},
+                "world_model": {"beta_reward": 0.2}
+            },
+            "env": {},
+            "session": {},
+        },
+        {
+            "exp": {"name": "return_loss"},
+            "agent": {
+                "actor": {},
+                "critic": {},
+                "world_model": {"beta_return": 0.2}
+            },
+            "env": {},
+            "session": {},
+        },
+        {
+            "exp": {"name": "triplet_loss"},
+            "agent": {
+                "actor": {},
+                "critic": {},
+                "world_model": {"beta_triplet": 0.2}
+            },
+            "env": {}, 
+            "session": {},
+        },
+        {
+            "exp": {"name": "high_beta_kl"},
+            "agent": {
+                "actor": {},
+                "critic": {},
+                "world_model": {"beta_kl": 0.1},
+            },
+            "env": {},
+            "session": {},
+        },
+        {
+            "exp": {"name": "agressive_reward_based"},
+            "agent": {
+                "actor": {},
+                "critic": {},
+                "world_model": {"beta_reward": 0.3, "beta_returns": 0.3, "beta_triplet": 0.3},
+            },
+            "env": {},
+            "session": {},
+        },
+        {
+            "exp": {"name": "large_actor_critic"},
+            "agent": {
+                "actor": {"layers": [128, 128, 64]},
+                "critic": {"layers": [128, 128]},
+                "world_model": {}
+            },
+            "env": {},
+            "session": {},
+        },
+        {
+            "exp": {"name": "more_vae_fc"},
+            "agent": {
+                "actor": {},
+                "critic": {},
+                "world_model": {
+                    "encoder": {"fc_layers": 3},
+                    "decoder": {"fc_layers": 3}
+                }
             },
             "env": {},
             "session": {},
         },
     ]
 
-    base_results_dir = "experiments/cnn"
+    base_results_dir = "experiments/vae"
     multi_experiment = MultiExperiment(baseline_config, parametric_changes, base_dir=base_results_dir)
     multi_experiment.run_experiments()
     

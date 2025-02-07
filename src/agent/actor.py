@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import List, Tuple
+from typing import Union, Tuple
 
 from src.agent.mlp import MLP
 from src.agent.cnn import CNN
@@ -9,7 +9,7 @@ from src.agent.cnn import CNN
 class Actor(nn.Module):
     def __init__(
             self,
-            state_dim: int, # E*2
+            state_dim: Union[Tuple[int,...], int], # E*2
             action_dim: int,
             config: object
             ):
@@ -18,10 +18,21 @@ class Actor(nn.Module):
         self.device = config.device
         self.action_dim = action_dim
         self.state_dim = state_dim
+        self.in_type = "latent"
+
+        if isinstance(state_dim, Tuple):
+            self.in_type = "obs"
+            self.cnn = CNN(
+                input_channels=state_dim[0]
+            )
+            with torch.no_grad():
+                dummy_input = torch.zeros(1, *state_dim)
+                cnn_output_dim = self.cnn(dummy_input).shape[1]
+            state_dim = cnn_output_dim
 
         self.policy_network = MLP(
             input_dim=state_dim,
-            output_dim=action_dim, # 3 values
+            output_dim=action_dim, # 3 options
             hidden_layers=self.config.agent.actor.layers
         )
         
@@ -40,7 +51,12 @@ class Actor(nn.Module):
         Returns:
             action_probs: (batch_size, 7) with only `action_dim` used
         """
-        logits = self.policy_network(state) # (batch_size, action_dim)
+        if self.in_type == "obs":
+            flattened_features = self.cnn(state)
+            logits = self.policy_network(flattened_features)
+        else:
+            logits = self.policy_network(state) # (batch_size, action_dim)
+        
         probs_3d = F.softmax(logits, dim=-1)
         batch_size = state.size(0)
         probs_7d = torch.zeros(batch_size, 7, device=self.device) # (batch_size, 7)

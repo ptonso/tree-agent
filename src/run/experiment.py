@@ -5,6 +5,7 @@ import datetime
 import inspect
 import numpy as np
 import torch
+from collections import defaultdict
 from dataclasses import is_dataclass, fields
 import matplotlib.pyplot as plt
 
@@ -40,18 +41,20 @@ class Experiment:
         """
         all_rewards = []
         all_times = []
+        wm_all_metrics = defaultdict(list)
+        agent_all_metrics = defaultdict(list)
 
         for run_idx in range(self.config.exp.n_runs):
-            self.logger.info(f"{'-'*40}")
+            self.logger.info(f"{'='*50}")
             self.logger.info(f"Starting training run {run_idx + 1}/{self.config.exp.n_runs}")
-            self.logger.info(f"{'-'*40}")
+            self.logger.info(f"{'='*50}")
             t0 = time.time()
             
             self.config.session.seed = self.config.exp.seed + run_idx
             
             session = Session(self.config, self.logger)
             session.setup()
-            rewards = session.run()
+            rewards, wm_metrics, agent_metrics = session.run()
             run_time = time.time() - t0
 
             self.logger.info("Average rewards:")
@@ -65,29 +68,54 @@ class Experiment:
             all_rewards.append(rewards)
             all_times.append(run_time)
 
+            for ep, metrics in wm_metrics.items():
+                wm_all_metrics[ep+1].append(metrics)
+            for ep, metrics in agent_metrics.items():
+                agent_all_metrics[ep+1].append(metrics)
+
         avg_rewards = np.mean(all_rewards, axis=0)
         std_rewards = np.std(all_rewards, axis=0)
-        
-        experiment_data = {}
 
-        experiment_data["config"] = Experiment.dataclass2dict(self.config)
-        
-        experiment_data["code"] = {
+        wm_avg, wm_std = self.aggregate_metrics(wm_all_metrics)
+        agent_avg, agent_std = self.aggregate_metrics(agent_all_metrics)
+       
+        experiment_data = {
+            "config": Experiment.dataclass2dict(self.config),
+            "code": {
             "agent": inspect.getsource(Agent),
             "actor": inspect.getsource(Actor),
             "critic": inspect.getsource(Critic),
             "world_model": inspect.getsource(WorldModel),
-            }
-        
-        experiment_data["performance"] = {
+            },
+        "performance": {
             'avg_rewards': avg_rewards.tolist(),
             'std_rewards': std_rewards.tolist(),
             'training_times': all_times,
             'mean_training_time': np.mean(all_times),
             'std_training_time': np.std(all_times)
+            },
+        "train_metrics": {
+            "world_model": {"avg": wm_avg, "std": wm_std},
+            "agent": {"avg": agent_avg, "std": agent_std}
+            }
         }
+
         self.experiment_data = experiment_data
         self.save_results(experiment_data)
+
+
+    def aggregate_metrics(self, all_metrics):
+        avg_metrics = {}
+        std_metrics = {}
+
+        for ep, metrics_list in all_metrics.items():
+            metric_keys = metrics_list[0].keys()
+            metrics_per_key = {key: [m.get(key, 0) for m in metrics_list] for key in metric_keys}
+
+            avg_metrics[ep] = {key: float(np.mean(values)) for key, values in metrics_per_key.items()}
+            std_metrics[ep] = {key: float(np.std(values)) for key, values in metrics_per_key.items()}
+
+        return avg_metrics, std_metrics
 
     def save_results(self, experiment_data: dict) -> None:
         """Save experiment results to JSON file"""
@@ -97,6 +125,7 @@ class Experiment:
         with open(filepath, 'w') as f:
             json.dump(experiment_data, f, indent=4)
         self.logger.info(f"Results saved to {filepath}")
+
 
     def plot_results(self, savefig: bool = True) -> None:
         """Plot results from one or more experiment files

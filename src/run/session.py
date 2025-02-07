@@ -2,14 +2,13 @@ import os
 import random
 import numpy as np
 import torch
-
 from typing import List
 
 from src.env.env import LabEnvironment
 from src.run.logger import create_logger
 from src.agent.agent import Agent
 from src.agent.trajectory import Trajectory
-from src.agent.structures import Observation
+from src.agent.structures import Observation, State
 
 from src.explain.visualizer import AutoencoderVisualizer
 
@@ -43,7 +42,9 @@ class Session:
         
         for step in range(self.n_steps):
             state = self.agent.world_model.encode(observation)
+
             action = self.agent.policy(state)
+            # action = self.agent.policy(observation)
 
             next_obs_data, reward, done = self.env.step(action.as_lab)
             next_observation = Observation.from_env(next_obs_data, device=self.config.device)
@@ -54,10 +55,18 @@ class Session:
             if self.config.session.render:
                 self.env.render(observation.for_render, action)
 
-            if self.config.session.vae_vis and step % 100 == 0:
+            if self.config.session.vae_vis and step % 200 == 0:
+
+                # saliency = self.agent.critic.compute_saliency(observation.as_tensor, next_observation.as_tensor)
+                # saliency = Observation(saliency, device=self.config.device)
+
                 with torch.no_grad():
                     x_hat = self.agent.world_model.decode(state)
-                    self.vis.render([observation.for_render], [state.for_render], [x_hat.for_render])
+                    self.vis.render(
+                        [observation.for_render], 
+                        [state.for_render], 
+                        [x_hat.for_render], )
+                        # [saliency.for_render])
 
 
             trajectory.append(
@@ -82,6 +91,8 @@ class Session:
     def run(self) -> List[float]:
         """Run multiple episodes collecting experience and training in batches"""
         total_rewards = []
+        wm_metrics = {}
+        agent_metrics = {}
 
         WORLD_MODEL_TRAJECTORIES_IN_BATCH = 1
         ACTOR_CRITIC_TRAJECTORIES_IN_BATCH = 4
@@ -96,16 +107,18 @@ class Session:
             self.logger.info("-"*35)
 
             if len(self.online_trajectories) >= WORLD_MODEL_TRAJECTORIES_IN_BATCH:
-                self.agent.world_model.train_step(self.online_trajectories, logger=self.logger)
+                wm_train_metrics = self.agent.world_model.train_step(self.online_trajectories, logger=self.logger)
                 self.transfer_to_replay(self.online_trajectories)
                 self.online_trajectories = []
+                wm_metrics[episode] = wm_train_metrics
 
             if len(self.replay_trajectories) >= ACTOR_CRITIC_TRAJECTORIES_IN_BATCH:
-                self.agent.train_step(self.replay_trajectories, logger=self.logger)
+                agent_train_metrics = self.agent.train_step(self.replay_trajectories, logger=self.logger)
                 self.replay_trajectories = []
+                agent_metrics[episode] = agent_train_metrics
 
         self.env.close()
-        return total_rewards
+        return total_rewards, wm_metrics, agent_metrics
 
     def transfer_to_replay(self, trajectories: List[Trajectory]):
         """Convert online trajectories to replay buffer."""
@@ -114,17 +127,32 @@ class Session:
             traj.next_observations = None
             self.replay_trajectories.append(traj)
 
-
     def setup(self):
         """Initialize environment and agent"""
         self._set_seed(self.seed)
 
+        if torch.cuda.is_available():
+            current_device = torch.cuda.current_device()
+            props = torch.cuda.get_device_properties(current_device)
+            
+            total_memory = props.total_memory / (1024 ** 2) # GB
+            mem_alloc = torch.cuda.memory_allocated() / (1024 ** 2)
+            mem_reserved = torch.cuda.memory_reserved() / (1024 ** 2)
+            
+            self.logger.info(f"Using CUDA device: {current_device}")
+            self.logger.info(f"Total GPU Memory:      {total_memory:6.2f} MB")
+            self.logger.info(f"CUDA memory allocated: {mem_alloc:6.2f} MB")
+            self.logger.info(f"CUDA memory reserved:  {mem_reserved:6.2f} MB")
+
+
         self.env = LabEnvironment(config=self.config)
         observation = self.env.reset(seed=self.seed)
 
-        action_dim = self.env.action_space
+        state_dim = self.config.agent.world_model.latent_dim
+        # H, W, C = observation.shape
+        # state_dim = (C, H, W)
 
-        self.agent = Agent(action_dim, config=self.config)
+        self.agent = Agent(action_dim=self.env.action_space, state_dim=state_dim, config=self.config)
 
         self.vis = AutoencoderVisualizer()
 
