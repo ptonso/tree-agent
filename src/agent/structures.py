@@ -26,24 +26,24 @@ class State:
         return self._as_tensor
         
     @property
-    def mu_logvar(self) -> Tuple[torch.Tensor, torch.Tensor]:
-        if self._mu_logvar is None:
-            self._mu_logvar = (self.mu, self.logvar)
-        return self._mu_logvar
-
-    @property
     def for_render(self) -> np.ndarray:
         if self._for_render is None:
             self._for_render = self.state_data[0]
         return self._for_render
     
     @classmethod
-    def from_encoder(cls, z: np.ndarray, mu: torch.Tensor, logvar: torch.Tensor, device: str) -> "State":
-        state = cls(z, device)
-        state.mu = mu
-        state.logvar = logvar
-        return state
-    
+    def from_encoder(cls, state_data: torch.Tensor, mu: torch.Tensor, logvar: torch.Tensor, device: str) -> "State":
+        """
+        initializes from encoder output
+        """
+        instance = cls(state_data, device)
+        instance._mu_logvar = (
+            mu.cpu().detach().numpy(), 
+            logvar.cpu().detach().numpy()
+            )
+        return instance
+
+
 
 class Observation:
     """Handle (B, C, H, W) observation."""

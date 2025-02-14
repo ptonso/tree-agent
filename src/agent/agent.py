@@ -36,25 +36,10 @@ class Agent:
 
         self.world_model = WorldModel(
             config=self.config,
-            critic=self.critic
+            actor=self.actor
         ).to(self.device)
 
 
-    def policy(self, state: State) -> Action:
-        """
-        Select action based on current policy.
-        State: encoded state [B, E*2]
-        """
-        with torch.no_grad():
-            action_probs = self.actor(state.as_tensor) # (B, 7)
-            action_dist = torch.distributions.Categorical(action_probs)
-            discrete_action = action_dist.sample().item()
-
-        return Action(
-            action_probs=action_probs,        # (B, 3)
-            sampled_action = discrete_action, # int
-            device=self.device
-        )
         
     def compute_actor_loss(
             self,
@@ -108,7 +93,7 @@ class Agent:
         self.mb_size = self.config.agent.mb_size
 
 
-        state_values_full, next_state_values_full,advantages_full = \
+        state_values_full, next_state_values_full, advantages_full = \
             self._setup_values_and_advantage(tensors)
         
         indices = torch.randperm(N, device=self.device)
@@ -143,9 +128,8 @@ class Agent:
             self.actor.optimizer.step()
             self.critic.optimizer.step()
 
-
-            del mb_state_values, mb_states, mb_actions, mb_returns
-            torch.cuda.empty_cache()
+            # del mb_state_values, mb_states, mb_actions, mb_returns
+            # torch.cuda.empty_cache()
 
             batch_size_this = (end - start)
             sum_actor_loss  += actor_loss.item()  * batch_size_this
@@ -160,10 +144,11 @@ class Agent:
             count_samples
         )
 
-        if logger is not None:
-            logger.info(f"Actor Loss: {metrics['avg_actor_loss']:.4f}")
-            logger.info(f"Critic Loss: {metrics['avg_critic_loss']:.4f}")
-
+        if logger:
+            logger.info(f"Agent Loss:          {metrics['avg_total_loss']:.4f}")
+            logger.info(f"    Actor Loss:      {metrics['avg_actor_loss']:.4f}")
+            logger.info(f"    Critic Loss:     {metrics['avg_critic_loss']:.4f}")
+            
         return metrics
 
 

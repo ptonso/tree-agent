@@ -32,7 +32,8 @@ class Session:
         trajectory = Trajectory(
             device=self.config.device, 
             trajectory_id=episode_id,
-            gamma=self.config.agent.gamma)
+            gamma=self.config.agent.gamma,
+            n_steps=3)
         
         obs_data = self.env.reset(seed=self.seed + episode_id)
         observation = Observation.from_env(obs_data, device=self.config.device)
@@ -43,7 +44,7 @@ class Session:
         for step in range(self.n_steps):
             state = self.agent.world_model.encode(observation)
 
-            action = self.agent.policy(state)
+            action = self.agent.actor.policy(state)
             # action = self.agent.policy(observation)
 
             next_obs_data, reward, done = self.env.step(action.as_lab)

@@ -24,7 +24,7 @@ class TrajectoryData:
 class Trajectory:
     """Active trajectory being collected, with methods for adding steps and computing returns.
     Can be initialized empty for collection or from TrajectoryData for modification"""
-    def __init__(self, device: str, trajectory_id: int = 0, gamma: float = 0.997):
+    def __init__(self, device: str, trajectory_id: int = 0, gamma: float = 0.997, n_steps: int = 3):
         self.states:           List[np.ndarray] = []
         self.actions:          List[int] = []
         self.rewards:          List[float] = []
@@ -36,6 +36,7 @@ class Trajectory:
         self.trajectory_id = trajectory_id
         self.device = device
         self.gamma = gamma
+        self.n_steps = n_steps
 
     @classmethod
     def from_trajectory_data(cls, trajectory_data: TrajectoryData, gamma: float = 0.997) -> 'Trajectory':
@@ -84,7 +85,8 @@ class Trajectory:
             returns[t] = self.rewards[t] + self.gamma * next_return * (1 - self.dones[t])
             next_return = returns[t]
         return returns
-        
+
+
     def to_storage(self) -> TrajectoryData:
         """Convert to static TrajectoryData for storage"""
         trajectory_data = TrajectoryData(
@@ -124,6 +126,7 @@ class Trajectory:
         next_states_tensor = torch.cat([s.as_tensor for s in next_states], dim=0)
         dones_tensor = torch.tensor(dones, dtype=torch.float32, device=self.device)
         returns_tensor = torch.tensor(returns, dtype=torch.float32, device=self.device)
+        
 
         if observations is not None:
             observations_tensor = torch.cat([obs.as_tensor for obs in observations], dim=0)

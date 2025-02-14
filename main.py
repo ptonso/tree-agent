@@ -6,8 +6,8 @@ from src.run.config import Config, SessionConfig, EnvConfig, ExpConfig
 
 def main():
     # rendered_main()
-    # single_exp_main()
-    multi_exp_main()
+    single_exp_main()
+    # multi_exp_main()
     pass
 
 
@@ -36,7 +36,7 @@ def rendered_main():
 def single_exp_main():
     config = Config(
         exp=ExpConfig(
-            name="test!!",
+            name="kl_div",
             n_runs=3
         ),
         session=SessionConfig(
@@ -44,7 +44,7 @@ def single_exp_main():
             n_steps=1000,
             seed=42,
             render=False,
-            vae_vis=True,
+            vae_vis=False,
         )
     )
     experiment = Experiment(config, base_dir="experiments")
@@ -60,74 +60,21 @@ def multi_exp_main():
 
     parametric_changes = [
         {
-            "exp": {"name": "reward_loss"},
+            "exp": {"name": "td_q_n3_loss"},
             "agent": {
                 "actor": {},
                 "critic": {},
-                "world_model": {"beta_reward": 0.2}
+                "world_model": {"beta_td_q": 0.2}
             },
             "env": {},
             "session": {},
         },
         {
-            "exp": {"name": "return_loss"},
+            "exp": {"name": "td_q_n8_loss"},
             "agent": {
                 "actor": {},
                 "critic": {},
-                "world_model": {"beta_return": 0.2}
-            },
-            "env": {},
-            "session": {},
-        },
-        {
-            "exp": {"name": "triplet_loss"},
-            "agent": {
-                "actor": {},
-                "critic": {},
-                "world_model": {"beta_triplet": 0.2}
-            },
-            "env": {}, 
-            "session": {},
-        },
-        {
-            "exp": {"name": "high_beta_kl"},
-            "agent": {
-                "actor": {},
-                "critic": {},
-                "world_model": {"beta_kl": 0.1},
-            },
-            "env": {},
-            "session": {},
-        },
-        {
-            "exp": {"name": "agressive_reward_based"},
-            "agent": {
-                "actor": {},
-                "critic": {},
-                "world_model": {"beta_reward": 0.3, "beta_returns": 0.3, "beta_triplet": 0.3},
-            },
-            "env": {},
-            "session": {},
-        },
-        {
-            "exp": {"name": "large_actor_critic"},
-            "agent": {
-                "actor": {"layers": [128, 128, 64]},
-                "critic": {"layers": [128, 128]},
-                "world_model": {}
-            },
-            "env": {},
-            "session": {},
-        },
-        {
-            "exp": {"name": "more_vae_fc"},
-            "agent": {
-                "actor": {},
-                "critic": {},
-                "world_model": {
-                    "encoder": {"fc_layers": 3},
-                    "decoder": {"fc_layers": 3}
-                }
+                "world_model": {"beta_td_q": 0.2, "n_steps": 8},
             },
             "env": {},
             "session": {},

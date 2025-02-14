@@ -66,7 +66,9 @@ class Encoder(BaseVAE):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.conv(x)
         x = x.reshape(x.size(0), -1)
-        return self.mlp(x)
+        mu, logvar = self.mlp(x).chunk(2, dim=1)
+        return mu, logvar
+    
 
 
 class Decoder(BaseVAE):

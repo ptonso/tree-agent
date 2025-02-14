@@ -29,10 +29,10 @@ class EncoderConfig:
 
 @dataclass
 class DecoderConfig:
-    channels: List[int]  = field(default_factory=lambda: [128,  64,  32])
-    kernels:  List[int]  = field(default_factory=lambda: [  4,   4,   4])
-    strides:  List[int]  = field(default_factory=lambda: [  2,   2,   1])
-    paddings: List[int]  = field(default_factory=lambda: [  1,   1,   1])
+    channels: List[int]  = field(default_factory=lambda: [128,  64, 32])
+    kernels:  List[int]  = field(default_factory=lambda: [  4,   4,  4])
+    strides:  List[int]  = field(default_factory=lambda: [  2,   2,  1])
+    paddings: List[int]  = field(default_factory=lambda: [  1,   1,  1])
     fc_layers:  int      = 2
     fc_units:   int      = 256
     activation: str      = "silu"
@@ -46,16 +46,15 @@ class TransitionConfig:
     
 @dataclass
 class WorldModelConfig:
-    vae_lr:       float  = 2e-4
-    latent_dim:   int    = 64
-    n_epochs:     int    = 4
-    mb_size:      int    = 64
-    beta_recon:   float  = 1.00
-    beta_kl:      float  = 0.05
-    beta_reward:  float  = 0.00
-    beta_returns: float  = 0.00
-    beta_triplet: float  = 0.00
-    free_nats:    float  = 2.00
+    lr:              float  = 2e-4
+    latent_dim:      int    = 64
+    n_epochs:        int    = 3
+    mb_size:         int    = 64
+    beta_pred:       float  = 3.0
+    beta_dym:        float  = 0.001
+    beta_rep:        float  = 0.0001
+    horizon:         int    = 2
+    free_nats:    float  = 1.00
     gradient_clipping: float = 0.5
     encoder: EncoderConfig = EncoderConfig()
     decoder: DecoderConfig = DecoderConfig()
@@ -65,12 +64,12 @@ class WorldModelConfig:
 @dataclass
 class ActorConfig:
     lr: float = 3e-5
-    layers: List[int] = field(default_factory=lambda: [64, 64])
+    layers: List[int] = field(default_factory=lambda: [128, 128])
 
 @dataclass
 class CriticConfig:
     lr: float = 2e-5
-    layers: List[int] = field(default_factory=lambda: [128])
+    layers: List[int] = field(default_factory=lambda: [256])
 
 @dataclass
 class AgentConfig:

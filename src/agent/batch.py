@@ -1,21 +1,23 @@
 import torch
+import torch.nn.functional as F
 from typing import List, Optional
 from dataclasses import dataclass
 
 
 @dataclass
 class BatchTensors:
-    """Container for batched tensors ready for training"""
+    """Container for batched tensors ready for training
+    Shape: [B, T, *] with padding."""
     trajectory_lengths: List[int]
     states: torch.Tensor            # Shape: [B*T, *state_shape]
-    actions: torch.Tensor           # Shape: [B*T, action_dim]
+    actions: torch.Tensor           # Shape: [B*T]
     rewards: torch.Tensor           # Shape: [B*T]
     next_states:torch.Tensor        # Shape: [B*T, *state_shape]
     dones: torch.Tensor             # Shape: [B*T]
     returns: torch.Tensor           # Shape: [B*T]
-    masks: torch.Tensor             # Shape: [B*T], used to mask padding
-    observations: Optional[torch.Tensor] = None      # Shape: [B*T, H, W, C]
-    next_observations: Optional[torch.Tensor] = None # Shape: [B*T, H, W, C]
+    masks: torch.Tensor             # Shape: [B*T]
+    observations: Optional[torch.Tensor] = None      # Shape: [B*T, C, H, W]
+    next_observations: Optional[torch.Tensor] = None # Shape: [B*T, C, H, W]
 
 
 class Batch:
@@ -26,81 +28,51 @@ class Batch:
         self.tensors = self._prepare_batch()
 
     def _prepare_batch(self) -> BatchTensors:
-        """Convert list of trajectories into batched tensors."""
         trajectory_tensors = [traj.get_tensors() for traj in self.trajectories]
         trajectory_lengths = [len(traj) for traj in self.trajectories]
         max_length = max(trajectory_lengths)
+
+        def pad_tensor(tensor, pad_value=0):
+            """Pads tensor to shape (B, T, *)"""
+            pad_size = max_length - tensor.shape[0]
+            if pad_size > 0:
+                return F.pad(tensor, (0, 0) * (tensor.dim() - 1) + (0, pad_size), value=pad_value)
+            return tensor
         
-        batch_size = len(self.trajectories)
-        first_traj_tensors = trajectory_tensors[0]
+        def process_batch_tensors(index):
+            """COllects all tensors at a given index from trajectories and optionally pads them."""
+            # [B*T, *]
+            tensor_list = [traj[index] for traj in trajectory_tensors]
+            return torch.cat(tensor_list, dim=0)
 
-        # Get shapes for initialization
-        state_shape = first_traj_tensors[0].shape[1:]
-        action_shape = first_traj_tensors[1].shape[1:]
 
-        padded_states = torch.zeros( 
-            (batch_size, max_length, *state_shape), 
-            device=self.device)
-        padded_actions = torch.zeros( 
-            (batch_size, max_length), 
-            device=self.device, dtype=torch.long)
-        padded_rewards = torch.zeros( 
-            (batch_size, max_length), 
-            device=self.device)
-        padded_next_states = torch.zeros( 
-            (batch_size, max_length, *state_shape), 
-            device=self.device)
-        padded_dones = torch.zeros( 
-            (batch_size, max_length), 
-            device=self.device)
-        padded_returns = torch.zeros(
-            (batch_size, max_length),
-            device=self.device)
-        masks = torch.zeros(
-            (batch_size, max_length),
-            device=self.device)
+        batch_states        = process_batch_tensors(0)  # [B*T, *] or [B, T, *]
+        batch_actions       = process_batch_tensors(1)  # [B*T] or [B, T]
+        batch_rewards       = process_batch_tensors(2)  # [B*T] or [B, T]
+        batch_next_states   = process_batch_tensors(3)  # [B*T, *] or [B, T, *] 
+        batch_dones         = process_batch_tensors(4)  # [B*T] or [B, T]
+        batch_returns       = process_batch_tensors(5)  # [B*T] or [B, T]
 
-        has_observations = self.trajectories[0].observations is not None
+        batch_masks = torch.ones_like(batch_rewards, dtype=torch.float32)
+
+        has_observations = (trajectory_tensors[0][6] is not None)
+        batch_obs, batch_next_obs = None, None
         if has_observations:
-            obs_shape = first_traj_tensors[-1].shape[1:]
-            padded_observations = torch.zeros(
-                (batch_size, max_length, *obs_shape), 
-                device=self.device)
-            padded_next_observations = torch.zeros(
-                (batch_size, max_length, *obs_shape), 
-                device=self.device)
-        else:
-            padded_observations = None
-            padded_next_observations = None
+            batch_obs       = process_batch_tensors(6)  # [B*T, C, H, W] or [B, T, C, H, W]
+            batch_next_obs  = process_batch_tensors(7)  # [B*T, C, H, W] or [B, T, C, H, W]
 
-        for i, (states, actions, rewards, next_states, dones, returns, *obs_data) in enumerate(trajectory_tensors):
-            length = trajectory_lengths[i]
-            padded_states[i, :length] = states
-            padded_actions[i, :length] = actions
-            padded_rewards[i, :length] = rewards
-            padded_next_states[i, :length] = next_states
-            padded_dones[i, :length] = dones
-            padded_returns[i, :length] = returns
-            masks[i, :length] = 1 # Mark valid entries
 
-            if has_observations and len(obs_data) == 2:
-                observations, next_observations = obs_data
-                padded_observations[i, :length] = observations
-                padded_next_observations[i, :length] = next_observations
-
-        # Reshape to [B*T, ...]
-        B, T = batch_size, max_length
         return BatchTensors(
             trajectory_lengths=trajectory_lengths,
-            states=padded_states.reshape(B * T, *state_shape),
-            actions=padded_actions.reshape(B * T, *action_shape),
-            rewards=padded_rewards.reshape(B * T),
-            next_states=padded_next_states.reshape(B * T, *state_shape),
-            dones=padded_dones.reshape(B * T),
-            returns=padded_returns.reshape(B * T),
-            masks=masks.reshape(B * T),
-            observations=padded_observations.reshape(B * T, *obs_shape) if has_observations else None,
-            next_observations=padded_next_observations.reshape(B * T, *obs_shape) if has_observations else None
+            states=batch_states,
+            actions=batch_actions,
+            rewards=batch_rewards,
+            next_states=batch_next_states,
+            dones=batch_dones,
+            returns=batch_returns,
+            masks=batch_masks,
+            observations=batch_obs,
+            next_observations=batch_next_obs,
         )
     
     def __len__(self) -> int:

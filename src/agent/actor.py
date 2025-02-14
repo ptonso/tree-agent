@@ -5,6 +5,7 @@ from typing import Union, Tuple
 
 from src.agent.mlp import MLP
 from src.agent.cnn import CNN
+from src.agent.structures import State, Action
 
 class Actor(nn.Module):
     def __init__(
@@ -62,6 +63,24 @@ class Actor(nn.Module):
         probs_7d = torch.zeros(batch_size, 7, device=self.device) # (batch_size, 7)
         probs_7d[:, :3] = probs_3d
         return probs_7d
+    
+    def policy(self, state: Union[State, torch.Tensor]) -> Action:
+        """
+        Select action based on current policy.
+        State: encoded state [B, E*2]
+        """
+        with torch.no_grad():
+            if isinstance(state, State):
+                state = state.as_tensor
+            action_probs = self.forward(state) # (B, 7)
+            action_dist = torch.distributions.Categorical(action_probs)
+            discrete_action = action_dist.sample()
+
+        return Action(
+            action_probs=action_probs,        # (B, 3)
+            sampled_action = discrete_action, # int
+            device=self.device
+        )        
     
     def _initialize_weights(self) -> None:
         for m in self.policy_network.modules():
