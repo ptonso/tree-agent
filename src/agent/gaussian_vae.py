@@ -38,23 +38,11 @@ class Encoder(BaseVAE):
             in_channels: int, 
             in_height: int, 
             in_width: int, 
-            latent_dim: int,
-            num_classes: int,
+            latent_dim: int, 
             cfg: "EncoderConfig"
         ):
-        """
-        Args:
-            in_channel:  C
-            in_height:   H
-            in_width:    W
-            latent_dim:  d - num of variables
-            num_classes: K - num of classes per variable
-        """
         super().__init__()
         self.cfg = cfg
-        self.latent_dim = latent_dim
-        self.num_classes = num_classes
-
         act = make_activation(cfg.activation)
         conv_layers = []
         c_in = in_channels
@@ -76,46 +64,31 @@ class Encoder(BaseVAE):
             fc_layers.append(Norm(cfg.norm_type, cfg.fc_units))
             fc_layers.append(act)
             in_dim = cfg.fc_units
-        fc_layers.append(nn.Linear(in_dim, latent_dim * num_classes))
+        fc_layers.append(nn.Linear(in_dim, latent_dim*2))
         self.mlp = nn.Sequential(*fc_layers)
         self.apply(self._init_weights)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Args:
-            x: observation tensor
-        Returns:
-            logits: categorical logits (B, d, K)
-        """
         x = self.conv(x)
         x = x.reshape(x.size(0), -1)
-        logits = self.mlp(x)
-        logits = logits.view(x.size(0), self.latent_dim, self.num_classes) # (B, d, K)
-        return logits
+        mu, logvar = self.mlp(x).chunk(2, dim=1)
+        return mu, logvar
     
 
 
 class Decoder(BaseVAE):
     def __init__(
-            self, 
-            out_channels: int, 
-            out_height: int, 
-            out_width: int, 
-            latent_dim: int, 
-            num_classes: int,
-            cfg: "DecoderConfig"):
+            self, out_channels: int, out_height: int, out_width: int, 
+            latent_dim: int, cfg: "DecoderConfig"):
         super().__init__()
         self.cfg = cfg
         self.out_height = out_height
         self.out_width = out_width
-        self.latent_dim = latent_dim
-        self.num_classes = num_classes
-
         act = make_activation(cfg.activation)
 
         # FC stack
         fc_layers = []
-        in_dim = latent_dim * num_classes
+        in_dim = latent_dim
         for _ in range(cfg.fc_layers):
             fc_layers.append(nn.Linear(in_dim, cfg.fc_units))
             fc_layers.append(Norm(cfg.norm_type, cfg.fc_units))
@@ -146,18 +119,12 @@ class Decoder(BaseVAE):
         self.apply(self._init_weights)
 
     def forward(self, z: torch.Tensor) -> torch.Tensor:
-        """
-        Args:
-            z: flatten one hot of categorical latent (B, d*K)
-        Returns:    
-            xhat: observation prediction
-        """
         x = self.fc(z)
         c0 = self.cfg.channels[0]
         x = x.view(x.size(0), c0, 8, 8)
-        x_hat = self.deconv(x)
-        x_hat = F.interpolate(x_hat, size=(self.out_height, self.out_width), mode='bilinear', align_corners=False)
-        return x_hat
+        x = self.deconv(x)
+        x = F.interpolate(x, size=(self.out_height, self.out_width), mode='bilinear', align_corners=False)
+        return x
     
 
 class RMSNorm(nn.Module):

@@ -105,8 +105,8 @@ class Trajectory:
         return len(self.states)
 
     def get_instances(self):
-        states = [State(st, device=self.device) for st in self.states]
-        next_states = [State(st, device=self.device) for st in self.next_states]
+        states = [State.from_numpy(st, device=self.device) for st in self.states]
+        next_states = [State.from_numpy(st, device=self.device) for st in self.next_states]
         actions = [Action(sampled_action=act, device=self.device) for act in self.actions]
         
         observations = None

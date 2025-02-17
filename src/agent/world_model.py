@@ -4,7 +4,7 @@ import torch.nn.functional as F
 from collections import defaultdict
 from typing import Optional, List, Dict
 
-from src.agent.structures import State, Observation
+from src.agent.structures import State, Observation, Latent
 from src.agent.vae import Encoder, Decoder
 from src.agent.transition_model import TransitionModel
 from src.agent.mlp import MLP
@@ -21,7 +21,8 @@ class WorldModel(nn.Module):
         self.actor = actor
 
     def _init_hyperparameter(self, wm_cfg):
-        self.state_dim = wm_cfg.latent_dim
+        self.d = wm_cfg.latent_dim
+        self.K = wm_cfg.num_classes
         self.beta_pred = wm_cfg.beta_pred
         self.beta_dym = wm_cfg.beta_dym
         self.beta_rep = wm_cfg.beta_rep
@@ -38,7 +39,8 @@ class WorldModel(nn.Module):
             in_channels=config.env.channels,
             in_height=config.env.height,
             in_width=config.env.width,
-            latent_dim=wm_cfg.latent_dim,
+            latent_dim=self.d,
+            num_classes=self.K,
             cfg=wm_cfg.encoder
         )
 
@@ -46,24 +48,26 @@ class WorldModel(nn.Module):
             out_channels=config.env.channels,
             out_height=config.env.height,
             out_width=config.env.width,
-            latent_dim=wm_cfg.latent_dim,
+            latent_dim=self.d,
+            num_classes=self.K,
             cfg=wm_cfg.decoder
         )
 
         self.reward_predictor = MLP(
-            input_dim=wm_cfg.latent_dim,
+            input_dim=self.d * self.K,
             output_dim=1,
             hidden_layers=[128, 128]
         )
 
         self.continue_predictor = MLP(
-            input_dim=wm_cfg.latent_dim,
+            input_dim=self.d * self.K,
             output_dim=1,
             hidden_layers=[128, 128]
         )
 
         self.transition_model = TransitionModel(
-            latent_dim=wm_cfg.latent_dim,
+            latent_dim=self.d,
+            num_classes= self.K,
             action_dim=1,
             cfg=wm_cfg.transition,
             device=self.device
@@ -79,13 +83,10 @@ class WorldModel(nn.Module):
             eps=1e-20
         )
 
-
     def encode(self, observation: Observation) -> tuple:
         """Encode observation into latent state representation"""
-        mu, logvar = self.encoder(observation.as_tensor)
-        z = self.reparametrize(mu, logvar)
-        z_data = z.cpu().detach().numpy()
-        return State.from_encoder(z_data, mu, logvar, device=self.device)
+        logits = self.encoder(observation.as_tensor)
+        return State.from_encoder(logits, device=self.device)
 
     def decode(self, state: State) -> torch.Tensor:
         """Decodes latent vector into an image."""
@@ -93,11 +94,9 @@ class WorldModel(nn.Module):
         return Observation.from_decoder(x_hat, device=self.device)
     
     @staticmethod
-    def reparametrize(mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
-        """Reparametrization trick to sample from N(mu, var)"""
-        std = torch.exp(0.5 * logvar)
-        eps = torch.randn_like(std)
-        return mu + eps * std
+    def reparametrize(latent: Latent) -> torch.Tensor:
+        """Sample from C(pp_k)"""
+        return latent.as_onehot
 
     def predict_future(self, z: torch.Tensor, action_seq: torch.Tensor, horizon: int):
         """Multi-step rollout based on action.
@@ -107,23 +106,22 @@ class WorldModel(nn.Module):
 
         for t in range(horizon):
             action_t = action_seq[:, t]
-            mu_hat, logvar_hat = self.transition_model(current_z, action_t)
-            next_z = self.reparametrize(mu_hat, logvar_hat)
+            next_logits = self.transition_model(current_z, action_t) # (B, d, K)
+            next_z = Latent.from_encoder(next_logits, device=self.device)
+            next_z_tensor = next_z.as_tensor
 
-            reward_hat = self.reward_predictor(next_z)
-            cont_hat = self.continue_predictor(next_z)
+            reward_hat = self.reward_predictor(next_z.as_tensor)
+            cont_hat = self.continue_predictor(next_z.as_tensor)
 
             preds["reward"].append(reward_hat)
             preds["continue"].append(cont_hat)
-            preds["mu"].append(mu_hat)
-            preds["logvar"].append(logvar_hat)
-            preds["z_next"].append(next_z)
-            current_z = next_z
+            preds["next_logits"].append(next_logits)
+            preds["next_z"].append(next_z_tensor)
+            current_z = next_z.as_tensor
 
         for key, value in preds.items():
             preds[key] = torch.stack(value, dim=1) # [B, H, *dim]
         return preds
-        
 
 
     def compute_losses(self, mb_data: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
@@ -136,7 +134,7 @@ class WorldModel(nn.Module):
         - Dynamic loss
             - z_pred and z_real: KL div
         - Representation loss
-            - ???
+            - z_real and z_pred: KL div
         """
         obs0 = mb_data['obs0']
         action_seq = mb_data['action_seq']
@@ -147,8 +145,8 @@ class WorldModel(nn.Module):
         mb = obs0.shape[0]
         horizon = self.config.agent.world_model.horizon
 
-        mu0, logvar0 = self.encoder(obs0) # (B*T, latent_dim)
-        z0 = self.reparametrize(mu0, logvar0)
+        z_logits0 = self.encoder(obs0) # (B*T, d, K)
+        z0 = Latent(z_logits0, device=self.device).as_tensor # (B*T, d*K)
 
         preds = self.predict_future(z0, action_seq, horizon)
 
@@ -156,30 +154,27 @@ class WorldModel(nn.Module):
         reward_loss = F.mse_loss(preds['reward'], symlog_reward_seq, reduction='mean')
         continue_loss = F.binary_cross_entropy_with_logits(preds['continue'], continue_seq, reduction='mean')
 
-        z_preds_flat = preds['z_next'].view(mb * horizon, -1)
+        z_preds_flat = preds["next_z"].view(mb * horizon, -1)
         recon_obs = self.decoder(z_preds_flat)
         symlog_obs_seq = self.symlog(obs_seq)
         recon_loss = F.mse_loss(recon_obs, symlog_obs_seq, reduction='mean')
 
-        mu_preds_flat = preds['mu'].view(mb * horizon, -1)
-        logvar_preds_flat = preds['logvar'].view(mb * horizon, -1)
+        logits_preds_flat = preds["next_logits"].view(mb * horizon, self.d, self.K)
+        latent_preds_flat = Latent(logits_preds_flat, device=self.device)
         with torch.no_grad():
-            mu_next, logvar_next = self.encoder(obs_seq)
+            logits_next = self.encoder(obs_seq)
+        latent_next = Latent(logits_next, device=self.device)
 
         # KL[ stopgrad(q) || p ]
-        dyn_loss = self.gaussian_kl(
-            mu_next.detach(), 
-            logvar_next.detach(), 
-            mu_preds_flat, 
-            logvar_preds_flat, 
+        dyn_loss = self.categorical_kl(
+            latent_next.as_probs.detach(),
+            latent_preds_flat.as_probs
         )
 
         # KL[ q || stopgrad(p) ]
-        rep_loss = self.gaussian_kl(
-            mu_preds_flat.detach(), 
-            logvar_preds_flat.detach(),
-            mu_next, 
-            logvar_next
+        rep_loss = self.categorical_kl(
+            latent_preds_flat.as_probs.detach(), 
+            latent_next.as_probs
         )
 
         kl_adj = self.kl_scale * (dyn_loss.detach() - self.kl_ema)
@@ -205,25 +200,24 @@ class WorldModel(nn.Module):
         }
 
         return losses
-
-    def gaussian_kl(
-            self, 
-            mu_q: torch.Tensor, 
-            logvar_q: torch.Tensor,
-            mu_p: torch.Tensor,
-            logvar_p: torch.Tensor,
-            ):
-        """KL betwene diagonal Gaussian q ~ N(mu_q, exp(logvar_q))
-        and p ~ N(mu_p, exp(logvar_p))"""
-        sigma_q2 = logvar_q.exp()
-        sigma_p2 = logvar_p.exp()
-        kl = 0.5 * (
-            (sigma_q2 + (mu_q - mu_p).pow(2)) / sigma_p2
-            + (logvar_p - logvar_q)
-            - 1.
-        )
-        kl_per_sample = torch.clamp(kl, min=self.free_nats).sum(dim=-1)
-        return kl_per_sample.mean() # sum over latent dim, average over batch
+    
+    def categorical_kl(
+            self,
+            q_probs: torch.Tensor,
+            p_probs: torch.Tensor
+        ) -> torch.Tensor:
+        """
+        Compute KL divergence between categorical distributions:
+            KL[ q || p ] = sum q * ( log q - log p)
+        Args:
+            q_probs: parameters of posterior q(z|x), shape (B, d, K)
+            p_probs: parameters of prior p(z|x),     shape (B, d, K)
+        Returns:
+            KL divergence (scalar)            
+        """
+        kl = (q_probs * (torch.log(q_probs + 1e-8) - torch.log(p_probs + 1e-8))).sum(dim=-1) # Sum over K
+        kl_per_sample = torch.clamp(kl, min=self.free_nats).mean()
+        return kl_per_sample
 
 
     @staticmethod

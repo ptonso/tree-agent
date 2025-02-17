@@ -24,7 +24,7 @@ class AutoencoderVisualizer:
         """
         self.target_width = target_width
         self.target_height = target_height
-        self.embed_width = embed_width // 2  # Split between mu and logvar
+        self.embed_width = embed_width
         self.row_spacing = row_spacing
         self.obs_embed_spacing = obs_embed_spacing
         self.embed_column_spacing = embed_column_spacing
@@ -51,39 +51,30 @@ class AutoencoderVisualizer:
         """
         Creates embedding visualization with mu and logvar as separate columns with different colormaps.
         """
-        E = embed.shape[0] // 2
-        mu, logvar = embed[:E], embed[E:]
 
         def normalize(x: np.ndarray) -> np.ndarray:
             min_val, max_val = x.min(), x.max()
             return (x - min_val) / (max_val - min_val + 1e-8) if max_val > min_val else np.zeros_like(x)
 
-        mu_norm = normalize(mu)
-        logvar_norm = normalize(logvar)
+        embed_norm = normalize(embed)
 
         # Calculate embed height (70% of observation height)
         embed_height = int(target_height * 0.7)
         padding_height = (target_height - embed_height) // 2
 
-        mu_vis = cv2.resize(mu_norm.reshape(-1, 1), (self.embed_width, embed_height), 
-                           interpolation=cv2.INTER_NEAREST)
-        logvar_vis = cv2.resize(logvar_norm.reshape(-1, 1), (self.embed_width, embed_height), 
-                               interpolation=cv2.INTER_NEAREST)
+        embed_vis = cv2.resize(
+            embed_norm.reshape(-1, 1), 
+            (self.embed_width, embed_height),
+            interpolation=cv2.INTER_NEAREST
+            )
 
-        mu_colored = (cm.viridis(mu_vis)[:, :, :3] * 255).astype(np.uint8)
-        logvar_colored = (cm.plasma(logvar_vis)[:, :, :3] * 255).astype(np.uint8)
+        embed_colored = (cm.viridis(embed_vis)[:, :, :3] * 255).astype(np.uint8)
 
         top_padding = np.zeros((padding_height, self.embed_width, 3), dtype=np.uint8)
         bottom_padding = np.zeros((target_height - embed_height - padding_height, self.embed_width, 3), dtype=np.uint8)
 
-        mu_column = np.vstack([top_padding, mu_colored, bottom_padding])
-        logvar_column = np.vstack([top_padding, logvar_colored, bottom_padding])
-        
-        separator = np.zeros((target_height, self.embed_column_spacing, 3), dtype=np.uint8)
-        
-        embed_vis = np.hstack([mu_column, separator, logvar_column])
-        
-        return embed_vis
+        embed_column = np.vstack([top_padding, embed_colored, bottom_padding])
+        return embed_column
 
     def visualize(
             self, 
@@ -109,6 +100,8 @@ class AutoencoderVisualizer:
                 obs_resized = cv2.addWeighted(obs_resized, 0.85, saliency_colored, 0.15, 0)
 
             embed_vis = self._create_embed_visualization(embed, obs_resized.shape[0])
+            
+            # stack: [ obs | spacer | embed | spacer |x_hat ]
             spacer = np.zeros((obs_resized.shape[0], self.obs_embed_spacing, 3), dtype=np.uint8)
             row_vis = np.hstack([obs_resized, spacer, embed_vis, spacer, x_hat_resized])
             

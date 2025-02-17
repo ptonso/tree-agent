@@ -3,51 +3,84 @@ import numpy as np
 from typing import Optional, Tuple
 
 
-class State:
-    """Handle (B, E) latent representations."""
-    def __init__(self, state_data: np.ndarray, device: str):
+class Latent:
+    """Handle latent representations:
+    parameter logits
+    parameter probabilities
+    sampled onehots
+    sampled indices
+    """
+    def __init__(
+            self, 
+            logits: torch.Tensor,
+            device: str, 
+        ):
         """
         Args:
-            state_data: encoded output in (B, E) format, float32, scaled to [0..1]
+            logits: (B, d, K) - d variables of K categories.
         """
-        self.state_data = state_data 
-        self.shape = state_data.shape # (B, E)
+        self.logits = logits # (B, d, K)
+        self.shape = logits.shape
+        self.B = logits.shape[0]
+        self.d = logits.shape[1]
+        self.K = logits.shape[2]
         self.device = device
 
-        self._as_tensor: Optional[torch.Tensor] = None
-        self._for_render: Optional[np.ndarray] = None # (E,)
-        self._mu_logvar : Optional[Tuple[np.ndarray, np.ndarray]] = None # (mu, logvar) each is (B, latent_dim)
+        self._as_probs: Optional[torch.Tensor] = None # (B, d, K) - parameter
+        self._as_onehot: Optional[torch.Tensor] = None   # (B, d, K) - sampled
+        self._as_indices: Optional[np.ndarray] = None    # (B, d)    - sampled
+        self._as_tensor: Optional[torch.Tensor] = None # (B, d*K)   - sampled - batch ready
+
+
+    @classmethod
+    def from_encoder(cls, logits: torch.Tensor, device: str) -> "Latent":
+        return cls(logits, device)
+    
+    @classmethod
+    def from_numpy(cls, logits: np.ndarray, device: str) -> "Latent":
+        tensor_logits = torch.tensor(logits, device=device)
+        return cls(tensor_logits, device)
+    
+    @property
+    def as_probs(self) -> torch.Tensor:
+        if self._as_probs is None:
+            self._as_probs = torch.nn.functional.softmax(self.logits, dim=-1)
+        return self._as_probs
+    
+    @property
+    def as_onehot(self) -> torch.Tensor:
+        """Samples one-hot representation fo categorical latent."""
+        if self._as_onehot is None:
+            sample = torch.distributions.Categorical(logits=self.logits).sample() # (B, d)
+            self._onehot = torch.nn.functional.one_hot(sample, num_classes=self.K).float() # (B, d, K)
+        return self._onehot
     
     @property
     def as_tensor(self) -> torch.Tensor:
+        """Flatten onehots to batch processing."""
         if self._as_tensor is None:
-            tensor = torch.tensor(self.state_data, dtype=torch.float32)
-            self._as_tensor = tensor.to(self.device) # (B, E)
+            self._as_tensor = self.as_onehot.flatten(start_dim=1) # [B, d, K] -> [B, d*K]
         return self._as_tensor
-        
-    @property
-    def for_render(self) -> np.ndarray:
-        if self._for_render is None:
-            self._for_render = self.state_data[0]
-        return self._for_render
-    
-    @classmethod
-    def from_encoder(cls, state_data: torch.Tensor, mu: torch.Tensor, logvar: torch.Tensor, device: str) -> "State":
-        """
-        initializes from encoder output
-        """
-        instance = cls(state_data, device)
-        instance._mu_logvar = (
-            mu.cpu().detach().numpy(), 
-            logvar.cpu().detach().numpy()
-            )
-        return instance
 
+    @property
+    def as_indices(self) -> np.ndarray:
+        """Returns the selected class index for each latent dimension."""
+        if self._as_indices is None:
+            self._as_indices = torch.argmax(self.logits, dim=-1).cpu().numpy() # (B, d)
+        return self._as_indices
+
+class Hidden:
+    def __init__(self):
+        pass
 
 
 class Observation:
     """Handle (B, C, H, W) observation."""
-    def __init__(self, obs_data: np.ndarray, device: str):
+    def __init__(
+            self, 
+            obs_data: np.ndarray, 
+            device: str,
+        ):
         """
         Args:
             obs_data: (B, C, H, W), float32[0..1]
@@ -107,6 +140,53 @@ class Observation:
         return self._for_render
 
 
+class State:
+    """Hub class for agent input.
+    Can handdle latent input, (future: latent+hidden), raw_observation"""
+    def __init__(
+            self,
+            device: str,
+            latent: Latent,
+        ):
+        self.device = device
+        self.latent = latent
+
+        self._as_tensor: Optional[torch.Tensor] = None # (B, K*d,)
+        self._for_render: Optional[np.ndarray] = None  # (d,)
+        self._state_data: Optional[np.ndarray] = None  # (B, K*d,)
+
+
+    @classmethod
+    def from_encoder(cls, logits: torch.Tensor, device: str) -> "State":
+        latent = Latent(logits, device=device)
+        return cls(latent=latent, device=device)
+
+    @classmethod
+    def from_numpy(cls, logits: np.ndarray, device: str) -> "State":
+        latent = Latent.from_numpy(logits, device=device)
+        return cls(latent=latent, device=device)
+
+    @property    
+    def as_tensor(self) -> torch.Tensor:
+        if self._as_tensor is None:
+            self._as_tensor = self.latent.as_tensor
+        return self._as_tensor
+
+    @property
+    def for_render(self) -> np.ndarray:
+        if self._for_render is None and self.latent is not None:
+            self._for_render = self.latent.as_indices[0]
+        return self._for_render
+
+
+    @property
+    def state_data(self) -> np.ndarray:
+        if self._state_data is None:
+            self._state_data = self.latent.logits.detach().cpu().numpy()
+        return self._state_data
+    
+
+
 class Action:
     def __init__(self, action_probs: Optional[torch.Tensor] = None,
                  sampled_action: int = None,
@@ -155,38 +235,3 @@ class Action:
             lab_action[0] = 50
         return lab_action
 
-
-
-# class FeatureMap:
-#     def __init__(self, feature_maps: torch.Tensor, device: str):
-#         """Handle CNN feature map transformations
-#         Args:
-#             feature_maps: CNN output of shape (B, n_feature_maps, H', W')
-#             device: torch device to use
-#         """
-#         self.feature_maps = feature_maps # (B, n_feature_maps, H', W')
-#         self.device = device
-#         self.shape = feature_maps.shape
-
-#         self._as_tensor: Optional[torch.Tensor] = None
-#         self._as_numpy: Optional[np.ndarray] = None
-#         self._flattened: Optional[torch.Tensor] = None
-
-#     @property
-#     def as_tensor(self) -> torch.Tensor:
-#         if self._as_tensor is None:
-#             self._as_tensor = self.feature_maps.to(self.device)
-#         return self._as_tensor
-    
-#     @property
-#     def as_numpy(self) -> np.ndarray:
-#         if self._as_numpy is None:
-#             self._as_numpy = self.feature_maps.cpu().detach().numpy()
-#         return self._as_numpy
-    
-#     @property
-#     def flattened(self) -> torch.Tensor:
-#         if self._flattened is None:
-#             self._flattened = self.as_tensor.contiguous().view(self.as_tensor.size(0), -1)
-#         return self._flattened
-    

@@ -8,7 +8,7 @@ from src.env.env import LabEnvironment
 from src.run.logger import create_logger
 from src.agent.agent import Agent
 from src.agent.trajectory import Trajectory
-from src.agent.structures import Observation, State
+from src.agent.structures import Observation, Latent, State
 
 from src.explain.visualizer import AutoencoderVisualizer
 
@@ -149,7 +149,9 @@ class Session:
         self.env = LabEnvironment(config=self.config)
         observation = self.env.reset(seed=self.seed)
 
-        state_dim = self.config.agent.world_model.latent_dim
+        d = self.config.agent.world_model.latent_dim
+        K = self.config.agent.world_model.num_classes
+        state_dim = d * K
         # H, W, C = observation.shape
         # state_dim = (C, H, W)
 

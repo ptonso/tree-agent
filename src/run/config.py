@@ -47,12 +47,13 @@ class TransitionConfig:
 @dataclass
 class WorldModelConfig:
     lr:              float  = 2e-4
-    latent_dim:      int    = 64
+    latent_dim:      int    = 32
+    num_classes:     int    = 32
     n_epochs:        int    = 3
     mb_size:         int    = 64
     beta_pred:       float  = 3.0
-    beta_dym:        float  = 0.001
-    beta_rep:        float  = 0.0001
+    beta_dym:        float  = 1.0
+    beta_rep:        float  = 0.1
     horizon:         int    = 2
     free_nats:    float  = 1.00
     gradient_clipping: float = 0.5

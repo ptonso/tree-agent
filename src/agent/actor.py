@@ -10,7 +10,7 @@ from src.agent.structures import State, Action
 class Actor(nn.Module):
     def __init__(
             self,
-            state_dim: Union[Tuple[int,...], int], # E*2
+            state_dim: Union[Tuple[int,...], int], # d*K
             action_dim: int,
             config: object
             ):
@@ -64,15 +64,13 @@ class Actor(nn.Module):
         probs_7d[:, :3] = probs_3d
         return probs_7d
     
-    def policy(self, state: Union[State, torch.Tensor]) -> Action:
+    def policy(self, state: State) -> Action:
         """
         Select action based on current policy.
         State: encoded state [B, E*2]
         """
         with torch.no_grad():
-            if isinstance(state, State):
-                state = state.as_tensor
-            action_probs = self.forward(state) # (B, 7)
+            action_probs = self.forward(state.as_tensor) # (B, 7)
             action_dist = torch.distributions.Categorical(action_probs)
             discrete_action = action_dist.sample()
 
