@@ -25,7 +25,7 @@ class Agent:
 
         self.actor = Actor(
             state_dim=self.state_dim,
-            action_dim=3,
+            action_dim=self.action_dim,
             config=self.config
         ).to(self.device)
 
@@ -87,8 +87,7 @@ class Agent:
         ) -> Dict[str, float]:
         """Train agent using list of trajectory"""
 
-        batch = Batch(trajectories, self.device)
-        tensors = batch.tensors
+        tensors = Batch(trajectories, self.device).prepare_tensors()
         N = tensors.states.size(0)
         self.mb_size = self.config.agent.mb_size
 

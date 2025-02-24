@@ -9,8 +9,9 @@ from src.run.logger import create_logger
 from src.agent.agent import Agent
 from src.agent.trajectory import Trajectory
 from src.agent.structures import Observation, State
+from src.explain.dtree import DecisionTreeWrapper
 
-from src.explain.visualizer import AutoencoderVisualizer
+from src.explain.visualizer import AutoencoderVisualizer, VisualizerConfig
 
 class Session:
     def __init__(self, config, logger=None):
@@ -43,7 +44,6 @@ class Session:
         
         for step in range(self.n_steps):
             state = self.agent.world_model.encode(observation)
-
             action = self.agent.actor.policy(state)
             # action = self.agent.policy(observation)
 
@@ -58,26 +58,26 @@ class Session:
 
             if self.config.session.vae_vis and step % 200 == 0:
 
-                # saliency = self.agent.critic.compute_saliency(observation.as_tensor, next_observation.as_tensor)
-                # saliency = Observation(saliency, device=self.config.device)
-
                 with torch.no_grad():
                     x_hat = self.agent.world_model.decode(state)
-                    self.vis.render(
-                        [observation.for_render], 
-                        [state.for_render], 
-                        [x_hat.for_render], )
-                        # [saliency.for_render])
 
+                    self.vis.render(
+                        observation=observation.for_render,
+                        embedding=state.for_render,
+                        decoded=x_hat.for_render,
+                        world_model=self.agent.world_model,
+                        state=state
+                    )
 
             trajectory.append(
-                state.state_data,
-                action.sampled_action,
-                reward,
-                done,
-                next_state.state_data,
-                observation.obs_data,
-                next_observation.obs_data,
+                state            = state.state_data,
+                action           = action.sampled_action,
+                action_prob      = action.action_probs,
+                reward           = reward,
+                done             = done,
+                next_state       = next_state.state_data,
+                observation      = observation.obs_data,
+                next_observation = next_observation.obs_data,
             )
 
             if done:
@@ -96,7 +96,7 @@ class Session:
         agent_metrics = {}
 
         WORLD_MODEL_TRAJECTORIES_IN_BATCH = 1
-        ACTOR_CRITIC_TRAJECTORIES_IN_BATCH = 4
+        ACTOR_CRITIC_TRAJECTORIES_IN_BATCH = 1
 
         for episode in range(self.config.session.n_episodes):
             episode_reward, trajectory = self.run_episode(episode)
@@ -115,6 +115,7 @@ class Session:
 
             if len(self.replay_trajectories) >= ACTOR_CRITIC_TRAJECTORIES_IN_BATCH:
                 agent_train_metrics = self.agent.train_step(self.replay_trajectories, logger=self.logger)
+                dtree_train_metrics = self.dtree.train_step(self.replay_trajectories)
                 self.replay_trajectories = []
                 agent_metrics[episode] = agent_train_metrics
 
@@ -149,13 +150,26 @@ class Session:
         self.env = LabEnvironment(config=self.config)
         observation = self.env.reset(seed=self.seed)
 
+        action_dim = self.config.agent.action_dim
         state_dim = self.config.agent.world_model.latent_dim
         # H, W, C = observation.shape
         # state_dim = (C, H, W)
 
-        self.agent = Agent(action_dim=self.env.action_space, state_dim=state_dim, config=self.config)
+        self.agent = Agent(action_dim=action_dim, state_dim=state_dim, config=self.config)
 
-        self.vis = AutoencoderVisualizer()
+        self.dtree = DecisionTreeWrapper(tree_type="ddt", config=self.config, logger=self.logger)
+
+
+        config_vis = VisualizerConfig(
+            window_width = 760,
+            main_height = 200,
+            var_grid_height = 300,
+            embedding_width = 40,
+            window_name = "Autoencoder",
+            mode = "full",
+        )
+
+        self.vis = AutoencoderVisualizer(config=config_vis)
 
         self.logger.info("Session setup complete.")
 

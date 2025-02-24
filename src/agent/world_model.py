@@ -242,8 +242,7 @@ class WorldModel(nn.Module):
         n_epochs = self.config.agent.world_model.n_epochs
         horizon = self.config.agent.world_model.horizon
         
-        batch = Batch(trajectories, self.device)
-        tensors = batch.tensors
+        tensors = Batch(trajectories, self.device).prepare_tensors()
 
         metrics_accumulator = MetricAccumulator(self.device)
 

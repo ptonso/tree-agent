@@ -5,8 +5,8 @@ from src.run.config import Config, SessionConfig, EnvConfig, ExpConfig
 
 
 def main():
-    # rendered_main()
-    single_exp_main()
+    rendered_main()
+    # single_exp_main()
     # multi_exp_main()
     pass
 

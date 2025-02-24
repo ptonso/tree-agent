@@ -50,7 +50,7 @@ class Experiment:
             self.logger.info(f"{'='*50}")
             t0 = time.time()
             
-            self.config.session.seed = self.config.exp.seed + run_idx
+            self.config.session.seed = self.config.seed + run_idx
             
             session = Session(self.config, self.logger)
             session.setup()

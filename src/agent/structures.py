@@ -44,7 +44,6 @@ class State:
         return instance
 
 
-
 class Observation:
     """Handle (B, C, H, W) observation."""
     def __init__(self, obs_data: np.ndarray, device: str):
@@ -119,12 +118,14 @@ class Action:
             device: torch device to use
         """
         self.action_probs = action_probs # (B, action_dim)
-        self.sampled_action = sampled_action # int
+        self.sampled_action = (sampled_action.item() if isinstance(sampled_action, torch.Tensor)
+                               else sampled_action) # int
         self.device = device
 
         self._as_numpy: Optional[np.ndarray] = None       # (action_dim,) probability
         self._as_tensor: Optional[torch.Tensor] = None    # (action_dim,) probability
         self._as_lab: Optional[np.ndarray] = None         # (7,) lab integers
+
 
     @property
     def as_tensor(self) -> Optional[torch.Tensor]:
@@ -155,38 +156,3 @@ class Action:
             lab_action[0] = 50
         return lab_action
 
-
-
-# class FeatureMap:
-#     def __init__(self, feature_maps: torch.Tensor, device: str):
-#         """Handle CNN feature map transformations
-#         Args:
-#             feature_maps: CNN output of shape (B, n_feature_maps, H', W')
-#             device: torch device to use
-#         """
-#         self.feature_maps = feature_maps # (B, n_feature_maps, H', W')
-#         self.device = device
-#         self.shape = feature_maps.shape
-
-#         self._as_tensor: Optional[torch.Tensor] = None
-#         self._as_numpy: Optional[np.ndarray] = None
-#         self._flattened: Optional[torch.Tensor] = None
-
-#     @property
-#     def as_tensor(self) -> torch.Tensor:
-#         if self._as_tensor is None:
-#             self._as_tensor = self.feature_maps.to(self.device)
-#         return self._as_tensor
-    
-#     @property
-#     def as_numpy(self) -> np.ndarray:
-#         if self._as_numpy is None:
-#             self._as_numpy = self.feature_maps.cpu().detach().numpy()
-#         return self._as_numpy
-    
-#     @property
-#     def flattened(self) -> torch.Tensor:
-#         if self._flattened is None:
-#             self._flattened = self.as_tensor.contiguous().view(self.as_tensor.size(0), -1)
-#         return self._flattened
-    

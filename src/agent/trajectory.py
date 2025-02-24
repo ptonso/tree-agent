@@ -10,11 +10,12 @@ from src.agent.structures import State, Action, Observation
 class TrajectoryData:
     """Static container for trajectory data, optimized for storage in replay buffer.
     Uses numpy arrays for effiecient storage and serialization."""
-    states: np.ndarray      # Shape: [T, *state_shape]
-    actions: np.ndarray     # Shape: [T]
-    rewards: np.ndarray     # Shape: [T]
-    dones: np.ndarray       # Shape: [T]
-    next_states: np.ndarray # Shape: [T, *state_shape]
+    states: np.ndarray       # Shape: [T, *state_shape]
+    actions: np.ndarray      # Shape: [T]
+    actions_prob: np.ndarray # Shape: [T, *action_dim]
+    rewards: np.ndarray      # Shape: [T]
+    dones: np.ndarray        # Shape: [T]
+    next_states: np.ndarray  # Shape: [T, *state_shape]
     returns: Optional[np.ndarray] = None       # Shape: [T]
     advantages: Optional[np.ndarray] = None    # Shape: [T]
     observations: Optional[np.ndarray] = None       # Shape: [T, H, W, C]
@@ -27,6 +28,7 @@ class Trajectory:
     def __init__(self, device: str, trajectory_id: int = 0, gamma: float = 0.997, n_steps: int = 3):
         self.states:           List[np.ndarray] = []
         self.actions:          List[int] = []
+        self.actions_prob:     List[np.ndarray] = []
         self.rewards:          List[float] = []
         self.dones:            List[bool] = []
         self.next_states:      List[np.ndarray] = []
@@ -43,6 +45,7 @@ class Trajectory:
         trajectory = cls(gamma=gamma)
         trajectory.states = [state for state in trajectory_data.states]
         trajectory.actions = [action for action in trajectory_data.actions]
+        trajectory.actions_prob = [action for action in trajectory_data.actions]
         trajectory.rewards = trajectory_data.rewards.tolist()
         trajectory.dones = trajectory_data.dones.tolist()
         trajectory.next_states = [state for state in trajectory_data.next_states]
@@ -54,6 +57,7 @@ class Trajectory:
             self,
             state: np.ndarray,
             action: int,
+            action_prob: np.ndarray,
             reward: float,
             done: bool,
             next_state: np.ndarray,
@@ -62,6 +66,7 @@ class Trajectory:
         ):
         self.states.append(state)
         self.actions.append(action)
+        self.actions_prob.append(action_prob)
         self.rewards.append(reward)
         self.dones.append(done)
         self.next_states.append(next_state)
@@ -71,6 +76,7 @@ class Trajectory:
     def reset(self) -> None:
         self.states.clear()
         self.actions.clear()
+        self.actions_prob.clear()
         self.rewards.clear()
         self.dones.clear()
         self.next_states.clear()
@@ -92,6 +98,7 @@ class Trajectory:
         trajectory_data = TrajectoryData(
             states=np.stack(self.states),
             actions=np.array(self.actions),
+            actions_prob=np.array(self.actions_prob),
             rewards=np.array(self.rewards),
             dones=np.array(self.dones),
             next_states=np.stack(self.next_states),
@@ -107,7 +114,7 @@ class Trajectory:
     def get_instances(self):
         states = [State(st, device=self.device) for st in self.states]
         next_states = [State(st, device=self.device) for st in self.next_states]
-        actions = [Action(sampled_action=act, device=self.device) for act in self.actions]
+        actions = [Action(sampled_action=act, action_probs=prob, device=self.device) for act, prob in zip(self.actions, self.actions_prob)]
         
         observations = None
         next_observations = None
@@ -116,12 +123,36 @@ class Trajectory:
             next_observations = [Observation(obs, device=self.device) for obs in self.next_observations]
         return states, actions, self.rewards, next_states, self.dones, self.compute_returns(), observations, next_observations
 
+    def get_numpys(self):
+        """Convert trajectory data into NumPy arrays."""
+        states, actions, rewards, next_states, dones, returns, observations, next_observations = self.get_instances()
+
+        states_numpy = np.stack([s.state_data.squeeze() for s in states])
+        actions_numpy = np.array([a.sampled_action for a in actions], dtype=np.int32)
+        actions_prob_numpy = np.stack([a.as_numpy.squeeze() for a in actions])
+        rewards_numpy = np.array(rewards, dtype=np.float32)
+        next_states_numpy = np.stack([s.state_data.squeeze() for s in next_states])
+        dones_numpy = np.array(dones, dtype=np.bool_)
+        returns_numpy = np.array(returns, dtype=np.float32)
+
+        if observations is not None:
+            observations_numpy = np.stack([obs.obs_data for obs in observations])
+            next_observations_numpy = np.stack([obs.obs_data for obs in next_observations])
+        else:
+            observations_numpy = None
+            next_observations_numpy = None
+
+        return (states_numpy, actions_numpy, actions_prob_numpy, rewards_numpy, 
+                next_states_numpy, dones_numpy, returns_numpy, 
+                observations_numpy, next_observations_numpy)
+
 
     def get_tensors(self):
         states, actions, rewards, next_states, dones, returns, observations, next_observations = self.get_instances()
 
         states_tensor = torch.cat([s.as_tensor for s in states], dim=0) 
-        actions_tensor = torch.tensor(self.actions, dtype=torch.long, device=self.device)
+        actions_tensor = torch.tensor([a.sampled_action for a in actions], dtype=torch.long, device=self.device)
+        actions_prob_tensor = torch.cat([a.as_tensor for a in actions], dim=0)
         rewards_tensor = torch.tensor(rewards, dtype=torch.float32, device=self.device)
         next_states_tensor = torch.cat([s.as_tensor for s in next_states], dim=0)
         dones_tensor = torch.tensor(dones, dtype=torch.float32, device=self.device)
@@ -135,5 +166,7 @@ class Trajectory:
             observations_tensor = None
             next_observations_tensor = None
 
-        return states_tensor, actions_tensor, rewards_tensor, next_states_tensor, dones_tensor, returns_tensor, observations_tensor, next_observations_tensor
+        return (states_tensor, actions_tensor, actions_prob_tensor, rewards_tensor, 
+                next_states_tensor, dones_tensor, returns_tensor, 
+                observations_tensor, next_observations_tensor)
     
