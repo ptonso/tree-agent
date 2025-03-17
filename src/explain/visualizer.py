@@ -15,6 +15,7 @@ class VisualizerConfig:
     embedding_width: int = 40
     window_name: str = "Autoencoder"
     mode: Literal["full", "actual"] = "full"
+    saliency_mode: bool = True
 
 class AutoencoderVisualizer:
     def __init__(self, config: VisualizerConfig):
@@ -28,14 +29,22 @@ class AutoencoderVisualizer:
         embedding: np.ndarray,
         decoded: np.ndarray,
         world_model: Optional[WorldModel] = None,
-        state: Optional[State] = None
+        state: Optional[State] = None,
+        saliency: Optional[np.ndarray] = None
     ) -> None:
+        
+        if self.config.saliency_mode and saliency is not None:
+            with torch.no_grad():
+                observation = self._apply_saliency_overlay(observation, saliency)
+
         if self.config.mode == "full":
             if not (world_model and state):
                 raise ValueError("Full mode requires world_model and state")
             self._render_full(observation, embedding, decoded, world_model, state)
+
         elif self.config.mode == "actual":
             self._render_actual(observation, embedding, decoded)
+
         else:
             raise ValueError("Mode must be 'full' or 'actual'")
 
@@ -70,6 +79,22 @@ class AutoencoderVisualizer:
     ) -> None:
         main_row = self._build_main_row(observation, embedding, decoded)
         self._display_image(main_row)
+
+    def _apply_saliency_overlay(
+            self,
+            observation: np.ndarray,
+            saliency_map: np.ndarray
+        ) -> np.ndarray:
+        """Convert an image to grayscale and overlays the saliency map as a heatmap"""
+        grayscale = cv2.cvtColor(observation, cv2.COLOR_RGB2GRAY)
+        grayscale = cv2.cvtColor(grayscale, cv2.COLOR_GRAY2RGB)
+
+        saliency_map = (saliency_map - saliency_map.min()) / (saliency_map.max() - saliency_map.min() + 1e-8)
+        saliency_colormap = (cm.jet(saliency_map)[:, :, :3] * 255).astype(np.uint8)
+
+        overlay = cv2.addWeighted(grayscale, 0.5, saliency_colormap, 0.5, 0)
+        return overlay
+
 
     def _generate_latent_variations(
         self,
@@ -110,9 +135,14 @@ class AutoencoderVisualizer:
         embedding: np.ndarray,
         decoded: np.ndarray
     ) -> np.ndarray:
+        total_width = self.config.window_width
+        spacer_width = 10
+        emb_with = self.config.embedding_width
+        image_width = (total_width - emb_with - 2 * spacer_width) // 2
         height = self.config.main_height
-        obs_resized = self._resize_image(observation, height=height)
-        dec_resized = self._resize_image(decoded, height=height)
+
+        obs_resized = self._resize_image(observation, height=height, width=image_width)
+        dec_resized = self._resize_image(decoded, height=height, width=image_width)
         emb_vis = self._visualize_embedding(embedding, height=height)
         
         spacer = np.zeros((height, 5, 3), dtype=np.uint8)

@@ -8,18 +8,18 @@ from dataclasses import dataclass
 @dataclass
 class BatchTensors:
     """Container for batched tensors ready for training
-    Shape: [B, T, *] with padding."""
+    Shape: [N*T, *] with padding."""
     trajectory_lengths: List[int]
-    states: torch.Tensor            # Shape: [B*T, *state_shape]
-    actions: torch.Tensor           # Shape: [B*T]
-    actions_prob: torch.Tensor      # Shape: [B*T, *action_dim]
-    rewards: torch.Tensor           # Shape: [B*T]
-    next_states:torch.Tensor        # Shape: [B*T, *state_shape]
-    dones: torch.Tensor             # Shape: [B*T]
-    returns: torch.Tensor           # Shape: [B*T]
-    masks: torch.Tensor             # Shape: [B*T]
-    observations: Optional[torch.Tensor] = None      # Shape: [B*T, C, H, W]
-    next_observations: Optional[torch.Tensor] = None # Shape: [B*T, C, H, W]
+    states: torch.Tensor            # Shape: [N*T, *state_shape]
+    actions: torch.Tensor           # Shape: [N*T]
+    actions_prob: torch.Tensor      # Shape: [N*T, *action_dim]
+    rewards: torch.Tensor           # Shape: [N*T]
+    next_states:torch.Tensor        # Shape: [N*T, *state_shape]
+    dones: torch.Tensor             # Shape: [N*T]
+    returns: torch.Tensor           # Shape: [N*T]
+    masks: torch.Tensor             # Shape: [N*T]
+    observations: Optional[torch.Tensor] = None      # Shape: [N*T, C, H, W]
+    next_observations: Optional[torch.Tensor] = None # Shape: [N*T, C, H, W]
 
 
 @dataclass
@@ -41,7 +41,10 @@ class BatchNumpys:
 
 
 class Batch:
-    """Convert list of trajectories into batch tensors for training"""
+    """Convert list of trajectories into batch tensors for training
+    N: number of trajectories - len(trajectory)
+    T: steps per trajectory - config.n_steps
+    """
     def __init__(self, trajectories: List['Trajectory'], device: str):
         self.trajectories = trajectories
         self.device = device
@@ -57,20 +60,20 @@ class Batch:
     def prepare_tensors(self) -> BatchTensors:
         self.trajectory_tensors = [traj.get_tensors() for traj in self.trajectories]
         
-        batch_states        = self._process_batch(0, tensor_mode=True)  # [B*T, *]
-        batch_actions       = self._process_batch(1, tensor_mode=True)  # [B*T]
-        batch_actions_prob  = self._process_batch(2, tensor_mode=True).squeeze(1) # [B*T, *]
-        batch_rewards       = self._process_batch(3, tensor_mode=True)  # [B*T]
-        batch_next_states   = self._process_batch(4, tensor_mode=True)  # [B*T, *] 
-        batch_dones         = self._process_batch(5, tensor_mode=True)  # [B*T]
-        batch_returns       = self._process_batch(6, tensor_mode=True)  # [B*T]
+        batch_states        = self._process_batch(0, tensor_mode=True)  # [N*T, *]
+        batch_actions       = self._process_batch(1, tensor_mode=True)  # [N*T]
+        batch_actions_prob  = self._process_batch(2, tensor_mode=True).squeeze(1) # [N*T, *]
+        batch_rewards       = self._process_batch(3, tensor_mode=True)  # [N*T]
+        batch_next_states   = self._process_batch(4, tensor_mode=True)  # [N*T, *] 
+        batch_dones         = self._process_batch(5, tensor_mode=True)  # [N*T]
+        batch_returns       = self._process_batch(6, tensor_mode=True)  # [N*T]
         batch_masks = torch.ones_like(batch_rewards, dtype=torch.float32)
 
         has_observations = (self.trajectory_tensors[0][7] is not None)
         batch_obs, batch_next_obs = None, None
         if has_observations:
-            batch_obs       = self._process_batch(7, tensor_mode=True)  # [B*T, C, H, W]
-            batch_next_obs  = self._process_batch(8, tensor_mode=True)  # [B*T, C, H, W]
+            batch_obs       = self._process_batch(7, tensor_mode=True)  # [N*T, C, H, W]
+            batch_next_obs  = self._process_batch(8, tensor_mode=True)  # [N*T, C, H, W]
 
         return BatchTensors(
             trajectory_lengths=self.trajectory_lengths,
@@ -89,20 +92,20 @@ class Batch:
     def prepare_numpys(self) -> BatchNumpys:
         self.trajectory_numpys = [traj.get_numpys() for traj in self.trajectories]
         
-        batch_states        = self._process_batch(0, tensor_mode=False)  # [B*T, *]
-        batch_actions       = self._process_batch(1, tensor_mode=False)  # [B*T]
-        batch_actions_prob  = self._process_batch(2, tensor_mode=False)  # [B*T]
-        batch_rewards       = self._process_batch(3, tensor_mode=False)  # [B*T]
-        batch_next_states   = self._process_batch(4, tensor_mode=False)  # [B*T, *]
-        batch_dones         = self._process_batch(5, tensor_mode=False)  # [B*T]
-        batch_returns       = self._process_batch(6, tensor_mode=False)  # [B*T]
+        batch_states        = self._process_batch(0, tensor_mode=False)  # [N*T, *]
+        batch_actions       = self._process_batch(1, tensor_mode=False)  # [N*T]
+        batch_actions_prob  = self._process_batch(2, tensor_mode=False)  # [N*T]
+        batch_rewards       = self._process_batch(3, tensor_mode=False)  # [N*T]
+        batch_next_states   = self._process_batch(4, tensor_mode=False)  # [N*T, *]
+        batch_dones         = self._process_batch(5, tensor_mode=False)  # [N*T]
+        batch_returns       = self._process_batch(6, tensor_mode=False)  # [N*T]
         batch_masks = np.ones_like(batch_rewards, dtype=np.float32)
 
         has_observations = (self.trajectory_numpys[0][7] is not None)
         batch_obs, batch_next_obs = None, None
         if has_observations:
-            batch_obs       = self._process_batch(7, tensor_mode=False)  # [B*T, C, H, W]
-            batch_next_obs  = self._process_batch(8, tensor_mode=False)  # [B*T, C, H, W]
+            batch_obs       = self._process_batch(7, tensor_mode=False)  # [N*T, C, H, W]
+            batch_next_obs  = self._process_batch(8, tensor_mode=False)  # [N*T, C, H, W]
 
         return BatchNumpys(
             trajectory_lengths=self.trajectory_lengths,

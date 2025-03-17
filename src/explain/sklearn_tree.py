@@ -1,5 +1,4 @@
 import numpy as np
-import logging
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, mean_squared_error
@@ -11,8 +10,8 @@ from src.explain.dist2class import DistributionToClassificationConverter
 class SKLearnDecisionTree:
     """Decision tree classifier for action prediction, initialized lazily."""
 
-    def __init__(self, seed: int, config: SKLearnConfig):
-        self.seed = seed
+    def __init__(self, config: SKLearnConfig):
+        self.seed = config.seed
         self.config = config
         self.device = config.device
         self.converter: Optional[DistributionToClassificationConverter] = None
@@ -51,13 +50,14 @@ class SKLearnDecisionTree:
         self.model.fit(X_train, y_train, sample_weight=weights)
 
     def evaluate(self, X_test: np.ndarray, y_test: np.ndarray) -> Dict[str, float]:
-        """Evaluates the model on a test set."""
+        """Evaluates the model on a test set. Given y_test distributions."""
         y_pred_class = self.model.predict(X_test)
 
         y_test_class = self.converter.dist_to_class(y_test)
         y_pred_dist = self.converter.class_to_dist(y_pred_class)
 
-        kl_loss = np.sum(y_pred_dist * np.log(y_test / (y_pred_dist + 1e-8))) / len(y_test)
+        eps = 1e-8
+        kl_loss = np.sum(y_test * np.log((y_test + eps) / (y_pred_dist + eps))) / len(y_test)
         mse_loss = mean_squared_error(y_test, y_pred_dist)
         accuracy = accuracy_score(y_test_class, y_pred_class)
 
@@ -65,10 +65,9 @@ class SKLearnDecisionTree:
             "actual_loss": accuracy,
             "kl_loss": kl_loss,
             "mse_loss": mse_loss,
-            "accuracy": accuracy
+            "argmax_acc_loss": accuracy
         }
     
-                         
 
     def train_step(self, X: np.ndarray, y_dist: np.ndarray, dones: np.ndarray, values: np.ndarray) -> Dict[str, np.ndarray]:
         """Trains the model by converting distribution labels into class labels."""
@@ -81,14 +80,15 @@ class SKLearnDecisionTree:
         if self.model is None:
             self._initialize_model()
 
-        y_class, _ = self.converter.convert_training_data(y_dist)
         weights = self._compute_weights(values, dones)
 
         X_train, X_val, y_train, y_val, weights_train, _ = train_test_split(
-            X, y_class, weights, test_size=0.2, random_state=self.seed
+            X, y_dist, weights, test_size=0.2, random_state=self.seed
         )
 
-        self.fit_class(X_train, y_train, weights_train)
+        y_train_class, _ = self.converter.convert_training_data(y_train)
+
+        self.fit_class(X_train, y_train_class, weights_train)
         return self.evaluate(X_val, y_val)
 
 

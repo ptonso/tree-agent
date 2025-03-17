@@ -71,6 +71,7 @@ class Critic(nn.Module):
     def _initialize_weights(self) -> None:
         for m in self.value_network.modules():
             if isinstance(m, nn.Linear):
-                nn.init.xavier_uniform_(m.weight)
+                # nn.init.xavier_uniform_(m.weight)
+                nn.init.zeros_(m.weight)
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)

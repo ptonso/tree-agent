@@ -58,7 +58,9 @@ class WorldModelConfig(BaseConfig):
     beta_pred:       float  = 3.0
     beta_dym:        float  = 0.001
     beta_rep:        float  = 0.0001
-    horizon:         int    = 2
+    horizon:         int    = 0
+    saliency_bonus:  float  = 2.0
+    blur_kernel:     int    = 5
     free_nats:    float  = 1.00
     gradient_clipping: float = 0.5
     encoder: EncoderConfig = EncoderConfig()

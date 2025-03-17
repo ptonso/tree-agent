@@ -36,7 +36,7 @@ def rendered_main():
 def single_exp_main():
     config = Config(
         exp=ExpConfig(
-            name="kl_div",
+            name="dtree",
             n_runs=3
         ),
         session=SessionConfig(
@@ -59,29 +59,51 @@ def multi_exp_main():
     baseline_config.session.n_episodes = 500
 
     parametric_changes = [
-        {
-            "exp": {"name": "td_q_n3_loss"},
+
+            {
+            "exp": {"name": "blur-3-bonus-3"},
             "agent": {
                 "actor": {},
                 "critic": {},
-                "world_model": {"beta_td_q": 0.2}
+                "world_model": {"blur_kernel": 3, "saliency_bonus": 3.},
+            },
+            "env": {},
+            "session": {},
+        },
+            {
+            "exp": {"name": "blur-3-bonus-5"},
+            "agent": {
+                "actor": {},
+                "critic": {},
+                "world_model": {"blur_kernel": 3, "saliency_bonus": 5.},
+            },
+            "env": {},
+            "session": {},
+        },
+
+            {
+            "exp": {"name": "blur-5-bonus-3"},
+            "agent": {
+                "actor": {},
+                "critic": {},
+                "world_model": {"blur_kernel": 5, "saliency_bonus": 3.}
             },
             "env": {},
             "session": {},
         },
         {
-            "exp": {"name": "td_q_n8_loss"},
+            "exp": {"name": "blur-5-bonus-5"},
             "agent": {
                 "actor": {},
                 "critic": {},
-                "world_model": {"beta_td_q": 0.2, "n_steps": 8},
+                "world_model": {"blur_kernel": 5, "saliency_bonus": 5.},
             },
             "env": {},
             "session": {},
         },
     ]
 
-    base_results_dir = "experiments/vae"
+    base_results_dir = "experiments/saliency-vae"
     multi_experiment = MultiExperiment(baseline_config, parametric_changes, base_dir=base_results_dir)
     multi_experiment.run_experiments()
     
