@@ -1,6 +1,6 @@
 import torch
 import numpy as np
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 
 
 class State:
@@ -10,6 +10,11 @@ class State:
         Args:
             state_data: encoded output in (B, E) format, float32, scaled to [0..1]
         """
+        if state_data.ndim < 2:
+            state_data = np.expand_dims(state_data, axis=0)
+            print(f"state_data.shape: {state_data.shape}")
+
+
         self.state_data = state_data 
         self.shape = state_data.shape # (B, E)
         self.device = device
@@ -42,6 +47,8 @@ class State:
             logvar.cpu().detach().numpy()
             )
         return instance
+
+
 
 
 class Observation:
@@ -95,14 +102,21 @@ class Observation:
         return self._as_tensor
     
     @property
-    def for_render(self) -> np.ndarray:
+    def for_render(self) -> List[np.ndarray]:
         """
-        generate (H, W, C) uint8[0..255] image 
+        generate (H, W, C) uint8[0..255] image or
+        (B, H, W, C) uint8[0..255]
         """
         if self._for_render is None:
-            img = np.transpose(self.obs_data[0], (1,2,0))
-            img = (img + 0.5) * 255.
-            self._for_render = np.clip(img, 0, 255).astype(np.uint8)
+            self._for_render = []
+            for i in range(self.obs_data.shape[0]):
+                img = np.transpose(self.obs_data[i], (1, 2, 0))
+                img = (img + 0.5) * 255. 
+                img = np.clip(img, 0, 255).astype(np.uint8)
+                self._for_render.append(img)
+
+        if len(self._for_render) == 1:
+            self._for_render = self._for_render[0]
         return self._for_render
 
 

@@ -1,0 +1,531 @@
+import cv2
+import numpy as np
+import torch
+import math
+from dataclasses import dataclass
+from typing import Any, List, Tuple, Optional, Dict
+
+from src.run.logger import create_logger
+from src.run.config import SoftConfig
+from src.explain.soft_tree import SoftDecisionTree, InnerNode, LeafNode
+from src.explain.visual.base_visualizer import BaseVisualizer
+from src.agent.world_model import WorldModel
+from src.agent.structures import State
+
+
+@dataclass
+class NodeLayout:
+    width: int
+    height: int
+    x_positions: List[List[int]]
+    level_widths: List[int]
+
+
+class SoftTreeVisualizer(BaseVisualizer):
+    """
+    Visualizes a differentiable decision tree.
+    """
+    def __init__(self, config: "TreeVisualizerConfig") -> None:
+        super().__init__(config)
+        self.logger = create_logger("api.log")
+
+        self.config = config
+        self.canvas = np.full(
+            (config.window_height, config.window_width, 3),
+            config.bgc,
+            dtype=np.uint8
+        )
+        self.tree: Optional[SoftDecisionTree] = None
+        self.world_model: Optional[WorldModel] = None
+        self.decoded_cache: Dict[InnerNode, np.ndarray] = {}
+        self.embed = np.array([0.])
+
+
+    def update(
+            self, 
+            X: torch.Tensor,
+            tree: Optional[SoftDecisionTree] = None,
+            world_model: Optional[WorldModel] = None
+        ) -> None:
+        """
+        Updates the tree visualization dynamically.
+        """
+        self.canvas[:] = self.config.bgc
+        self.world_model = world_model
+            
+        if tree is not None:
+            self._initialize_layout(tree)
+
+        if not self.tree or not self.tree.root:
+            return
+            
+        self.embed = X.cpu().numpy().flatten()
+        nodes_list = self._collect_nodes_bfs(self.tree.root)
+
+        if self.world_model:
+            self._batch_decode_and_resize(nodes_list)
+        
+        self._draw_all_edges(nodes_list)
+
+        for node, depth, idx in nodes_list:
+            self._draw_inner_node(node, depth, idx)
+
+
+    def _initialize_layout(self, tree: SoftDecisionTree):
+        """Everything that is needed to rebuild the layout
+        given a new tree."""
+        if tree.root is None:
+            return
+        
+        self.tree = tree
+        self.max_depth = self.tree.max_depth
+        self.level_counts = self._compute_level_counts()
+        self.layout = self._compute_layout()
+
+        root_x, root_y = self._get_node_position(0, 0)
+        offset_y = 150
+
+        if self.config.show_embed:
+            self._draw_input(
+                self.embed,
+                x_left=int(root_x * 0.2),
+                y_top=max(30, root_y - offset_y),
+            )
+
+        if self.config.show_legend:
+            self._draw_legend(
+                x_left=int(root_x * 1.5),
+                y_top=max(30, root_y - offset_y)
+            )
+
+    def _compute_level_counts(self) -> List[int]:
+        counts = [0] * (self.max_depth + 2)
+        def recurse(node: Any, depth: int) -> None:
+            if node is None:
+                return
+            counts[depth] += 1
+            if isinstance(node, InnerNode):
+                recurse(node.left, depth + 1)
+                recurse(node.right, depth + 1)
+
+        recurse(self.tree.root, 0)
+        return counts
+
+    def _compute_layout(self) -> NodeLayout:
+        num_leaves = self.level_counts[self.max_depth]
+        usable_width = self.config.window_width - 2 * (self.config.window_width // 20)
+        leaf_width = max(20, min(60, usable_width // max(1, num_leaves)))
+
+
+        level_widths = [int(leaf_width * (1 + (self.max_depth - level) * 0.15))
+                        for level in range(self.max_depth + 1)]
+        
+        x_positions = [[(i + 1) * (usable_width // (count + 1)) + (self.config.window_width // 20)
+                        for i in range(count)] if count > 0 else []
+                       for count in self.level_counts]
+        
+        leaf_height = max(
+            40,
+            min(
+                80,
+                (self.config.window_height
+                 - self.config.top_margin
+                 - self.config.bottom_margin)
+                // max(1, (self.max_depth * 2))
+            )
+        )
+
+        return NodeLayout(
+            width=leaf_width,
+            height=leaf_height,
+            x_positions=x_positions,
+            level_widths=level_widths
+        )
+    
+    def _collect_nodes_bfs(self, root: Any) -> List[Tuple[Any, int, int]]:
+        queue = [(root, 0, 0)]
+        out = []
+        while queue:
+            node, depth, idx = queue.pop(0)
+            if node is None:
+                continue
+            if depth <= self.max_depth:
+                out.append((node, depth, idx))
+    
+            if isinstance(node, InnerNode):
+                queue.append((node.left, depth + 1, idx * 2))
+                queue.append((node.right, depth + 1, idx * 2 + 1))
+        return out
+
+    def _batch_decode_and_resize(
+            self, 
+            nodes_list: List[Tuple[Any, int, int]]
+            ) -> None:
+        inner_nodes = [
+            (node, idx) 
+            for node, _, idx in nodes_list 
+            if isinstance(node, InnerNode)
+            ]
+        
+        if not inner_nodes:
+            return
+        
+        wx_list = [
+            node.fc.weight.detach().cpu().numpy().flatten() \
+                * node.beta.detach().cpu().item() \
+                * self.embed
+                for node, _ in inner_nodes
+            ]
+        
+        wx_array = np.array(wx_list, dtype=np.float32)
+        wx_state = State(wx_array, device=self.world_model.device)
+
+        decoded_obs = self.world_model.decode(wx_state)
+
+        for (node, _), img in zip(inner_nodes, decoded_obs.for_render):
+            self.decoded_cache[node] = self.resize_image(image=img, width=64, height=64)
+
+    def _draw_all_edges(self, nodes_list: List[Tuple[Any, int, int]]) -> None:
+        for node, depth, idx in nodes_list:
+            if isinstance(node, InnerNode):
+                x, y = self._get_node_position(depth, idx)
+                lx, ly = self._get_node_position(depth + 1, idx * 2)
+                rx, ry = self._get_node_position(depth + 1, idx * 2 + 1)
+                
+                device = next(node.fc.parameters()).device
+                embed_tensor = torch.tensor(self.embed, dtype=torch.float32, device=device).unsqueeze(0)
+                prob_right = node.forward(embed_tensor).item()
+                self._draw_edge(x, y, lx, ly, 1 - prob_right)
+                self._draw_edge(x, y, rx, ry, prob_right)
+
+    def _draw_inner_node(self, node: Any, depth: int, idx: int) -> None:
+        x, y = self._get_node_position(depth, idx)
+        if isinstance(node, LeafNode):
+            self._draw_leaf(node, x, y, self.layout.width, self.layout.height)
+        else:
+            if node in self.decoded_cache:
+                img = self.decoded_cache[node]
+                
+                if len(img.shape) == 2:
+                    img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+
+                self.canvas[y - 32:y + 32, x - 32:x + 32] = img
+            else:
+                embed_img = self._build_embed_image(node, x, y)
+                self.canvas[y - 32:y + 32, x - 32:x + 32] = embed_img
+
+    def _resize_image(self, img: np.ndarray, width: int, height: int) -> np.ndarray:
+        return cv2.resize(img, (width, height), interpolation=cv2.INTER_AREA)
+
+    def _get_node_position(self, depth: int, node_index: int) -> Tuple[int, int]:
+        if depth >= len(self.layout.x_positions):
+            self.logger.warning(f"Depth {depth} out of range, clamping.")
+            depth = len(self.layout.x_positions) - 1
+
+        if not self.layout.x_positions[depth]:
+            self.logger.warning(f"No x_positions at depth={depth}. Returning center screen.")
+            return (self.config.window_width // 2, self.config.window_height // 2)
+
+        if node_index >= len(self.layout.x_positions[depth]):
+            self.logger.warning(f"Index {node_index} out of range at depth {depth}, clamping.")
+            node_index = len(self.layout.x_positions[depth]) - 1
+
+        x = self.layout.x_positions[depth][node_index]
+        y = self.config.top_margin + depth * 100
+        return (x, y)
+
+
+    def _draw_input(
+            self,
+            embed: np.ndarray,
+            x_left: int,
+            y_top: int,
+            ) -> None:
+        """
+        Draws a preview of the embedding, from white->red like leaf bars.
+        """
+        label = "Input Embedding"
+        cv2.putText(
+            self.canvas,
+            label,
+            (x_left, y_top - 8),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            self.config.font_scale,
+            (0, 0, 0),
+            self.config.font_thickness
+        )
+
+        box_size = max(50, min(self.config.window_width, self.config.window_height) // 6)
+
+        length = len(embed)
+        side = int(math.sqrt(length))
+        if side * side != length:
+            side = length
+
+        cell_size = max(1, box_size // max(side, 1))
+        max_val = np.max(np.abs(embed)) + 1e-8
+
+        for i in range(length):
+            val = embed[i]
+            alpha = min(1.0, max(0.0, abs(val) / max_val))
+            blue = np.array(self.config.blue, dtype=np.float32)
+            color = self.blend(np.array(alpha), blue)
+
+            r, c = divmod(i, side)
+            sx = x_left + c * cell_size
+            sy = y_top + r * cell_size
+
+            cv2.rectangle(
+                self.canvas,
+                (sx, sy),
+                (sx + cell_size, sy + cell_size),
+                tuple(int(k) for k in color),
+                -1
+            )
+
+        w_box = side * cell_size
+        h_box = side * cell_size
+        cv2.rectangle(
+            self.canvas,
+            (x_left - 1, y_top - 1),
+            (x_left + w_box + 1, y_top + h_box + 1),
+            (0, 0, 0),
+            1
+        )
+
+    def _draw_legend(self,
+                     x_left: int,
+                     y_top: int) -> None:
+        """
+        Draws two bars: 
+         1) Hue: red->blue
+         2) Magnitude: white->red
+        With short labels above each bar.
+        """
+        legend_label = "Legend"
+        cv2.putText(self.canvas,
+                    legend_label,
+                    (x_left, y_top - 10),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    self.config.font_scale,
+                    (0, 0, 0),
+                    self.config.font_thickness)
+
+        bar_w = max(60, self.config.window_width // 15)
+        bar_h = max(6, self.config.window_height // 100)
+        gap = bar_h * 2
+
+        # Hue label
+        hue_label = "Hue: red(-), blue(+)"
+        hue_label_x = x_left
+        hue_label_y = y_top + bar_h
+        cv2.putText(
+            self.canvas,
+            hue_label,
+            (hue_label_x, hue_label_y),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            self.config.font_scale * 0.8,
+            (0, 0, 0),
+            self.config.font_thickness
+        )
+
+        # Hue bar below label
+        hue_bar_top = hue_label_y + 8
+        steps = 30
+        for i in range(steps):
+            frac = i / (steps - 1)
+            # Red=(0,0,255), Blue=(255,0,0)
+            red = np.array(self.config.red, dtype=np.float32)
+            blue = np.array(self.config.blue, dtype=np.float32)
+            color = self.blend(frac, blue, red)
+
+            xx1 = x_left + i * (bar_w // steps)
+            yy1 = hue_bar_top
+            xx2 = xx1 + (bar_w // steps)
+            yy2 = yy1 + bar_h
+
+            cv2.rectangle(
+                self.canvas,
+                (xx1, yy1),
+                (xx2, yy2),
+                tuple(int(k) for k in color),
+                -1
+            )
+
+        # Next label for magnitude
+        mag_label = "Magnitude : 0->1"
+        mag_label_x = x_left
+        mag_label_y = hue_bar_top + bar_h + gap
+        cv2.putText(
+            self.canvas,
+            mag_label,
+            (mag_label_x, mag_label_y),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            self.config.font_scale * 0.8,
+            (0, 0, 0),
+            self.config.font_thickness
+        )
+
+        # Magnitude bar
+        mag_bar_top = mag_label_y + 8
+        steps2 = 30
+        for i in range(steps2):
+            frac = i / (steps2 - 1)
+            blue = np.array(self.config.blue, dtype=np.float32)
+            color = self.blend(frac, blue)
+
+            xx1 = x_left + i * (bar_w // steps2)
+            yy1 = mag_bar_top
+            xx2 = xx1 + (bar_w // steps2)
+            yy2 = yy1 + bar_h
+
+            cv2.rectangle(
+                self.canvas,
+                (xx1, yy1),
+                (xx2, yy2),
+                tuple(int(k) for k in color),
+                -1
+            )
+
+    def _draw_edge(self,
+                   x1: int,
+                   y1: int,
+                   x2: int,
+                   y2: int,
+                   prob: float) -> None:
+        """Draw blue edge with thickness reflecting probability values."""
+
+        color = self.config.blue # aways blue
+        thickness = max(1, min(5, int(1 + prob * 3)))
+        cv2.line(self.canvas, (x1, y1), (x2, y2), color, thickness)
+
+        txt = f"{prob:.2f}"[1:]
+        mx = (x1 + x2) // 2
+        my = (y1 + y2) // 2 - 10
+        (tw, th), _ = cv2.getTextSize(txt,
+                                      cv2.FONT_HERSHEY_SIMPLEX,
+                                      self.config.font_scale,
+                                      self.config.font_thickness)
+        pad = 2
+        bg1 = (mx - tw // 2 - pad, my - th - pad)
+        bg2 = (mx + tw // 2 + pad, my + pad)
+        cv2.rectangle(self.canvas, bg1, bg2, (255, 255, 255), -1)
+        cv2.putText(self.canvas, txt,
+                    (mx - tw // 2, my),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    self.config.font_scale,
+                    (0, 0, 0),
+                    self.config.font_thickness)
+
+    def _draw_nodes(self,
+                    node: Any,
+                    embed: np.ndarray,
+                    depth: int,
+                    node_index: int) -> None:
+        if node is None:
+            return
+
+        x, y = self._get_node_position(depth, node_index)
+
+        if isinstance(node, LeafNode):
+            self._draw_leaf(node, x, y,
+                            self.layout.width,
+                            self.layout.height)
+        else:
+            size = self.layout.level_widths[depth]
+            self._draw_inner_node(node, embed, x, y, size)
+            self._draw_nodes(node.left, embed, depth + 1, node_index * 2)
+            self._draw_nodes(node.right, embed, depth + 1, node_index * 2 + 1)
+
+
+    def _gather_wx(self, root: InnerNode, embed: np.ndarray) -> Dict[str, np.ndarray]:
+        device = next(root.fc.parameters()).device
+        wx_map = {}
+
+        def recurse(node: Any) -> None:
+            if node is None or isinstance(node, LeafNode):
+                return
+
+            if isinstance(node, InnerNode):
+                w_raw = node.fc.weight.detach().cpu().numpy().flatten()
+                beta_val = node.beta.detach().cpu().item()
+                weights = w_raw * beta_val
+                wx_values = weights * embed
+                wx_map[node] = wx_values
+                recurse(node.left)
+                recurse(node.right)
+
+        recurse(root)
+        return wx_map
+
+    def _draw_leaf(
+            self,
+            node: LeafNode,
+            cx: int,
+            cy: int,
+            width: int,
+            height: int
+            ) -> None:
+        action_probs = torch.softmax(node.param, dim=0).detach().cpu().numpy()
+        n_actions = len(action_probs)
+
+        w_box = width
+        h_box = max(1, height // n_actions)
+        tl_x = cx - w_box // 2
+        tl_y = cy - (h_box * n_actions // 2)
+
+        for i, prob in enumerate(action_probs):
+            alpha = float(prob)
+            blue = np.array(self.config.blue, dtype=np.float32)
+            color = self.blend(alpha, blue)
+
+            y1 = tl_y + i * h_box
+            cv2.rectangle(
+                self.canvas,
+                (tl_x, y1),
+                (tl_x + w_box, y1 + h_box),
+                tuple(int(k) for k in color),
+                -1
+            )
+            cv2.rectangle(
+                self.canvas,
+                (tl_x, y1),
+                (tl_x + w_box, y1 + h_box),
+                (0, 0, 0),
+                1
+            )
+
+
+    def _get_level_y(self, depth: int) -> int:
+        total_levels = self.max_depth + 1
+        if total_levels <= 1:
+            return self.config.top_margin
+        fraction = depth / (total_levels - 1)
+        used_h = (self.config.window_height
+                  - self.config.top_margin
+                  - self.config.bottom_margin)
+        return int(self.config.top_margin + fraction * used_h)
+
+
+if __name__ == "__main__":
+    torch.manual_seed(42)
+    config = SoftConfig()
+
+    input_dim = 64
+    output_dim = 3
+    sample_x = torch.randn(1, input_dim)
+
+    tree = SoftDecisionTree(config)
+    tree.setup_network(sample_x, torch.randn(1, output_dim))
+
+    from src.run.config import TreeVisualizerConfig
+    viz_cfg = TreeVisualizerConfig(
+        window_width=1200,
+        window_height=900,
+        show_embed=True,
+        show_legend=True
+    )
+
+    visualizer = SoftTreeVisualizer(viz_cfg, tree)
+    visualizer.update(sample_x)
+    visualizer.render()

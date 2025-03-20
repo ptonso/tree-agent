@@ -1,3 +1,4 @@
+import logging
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -5,6 +6,7 @@ import torch.optim as optim
 from typing import Optional, Tuple, List, Dict
 
 from src.run.config import SoftConfig
+from src.agent.batch import Batch
 
 
 class InnerNode:
@@ -26,7 +28,7 @@ class InnerNode:
 
     def build_child(self, depth: int):
         """Recursively build left and right child nodes."""
-        if depth < self.max_depth:
+        if depth < self.max_depth-1:
             self.left = InnerNode(depth + 1, self.input_dim, self.output_dim, self.max_depth, self.lmbda, self.device)
             self.right = InnerNode(depth + 1, self.input_dim, self.output_dim, self.max_depth, self.lmbda, self.device)
         else:
@@ -67,10 +69,11 @@ class LeafNode:
 class SoftDecisionTree(nn.Module):
     """A differentiable decision tree for predicting stochastic action distributions."""
 
-    def __init__(self, config: SoftConfig):
+    def __init__(self, config: SoftConfig, logger: Optional[logging.Logger] = None):
         super(SoftDecisionTree, self).__init__()
         self.config = config
         self.device = config.device
+        self.logger = logger
         self.max_depth = config.depth
         self.lr = config.lr
         self.momentum = config.momentum
@@ -88,16 +91,22 @@ class SoftDecisionTree(nn.Module):
         """Dynamically initializes the tree structure based on input and output dimensions."""
         if self.root is not None:
             return
-
         self.input_dim = X.shape[1]
         self.output_dim = y.shape[1]
 
-        self.root = InnerNode(1, self.input_dim, self.output_dim, self.max_depth, self.lmbda, self.device)
+        self.root = InnerNode(0, self.input_dim, self.output_dim, self.max_depth, self.lmbda, self.device)
         self.collect_parameters()
         self.optimizer = optim.SGD(self.parameters(), lr=self.lr, momentum=self.momentum)
         self.to(self.device)
 
-    def train_step(self, X: torch.Tensor, y: torch.Tensor) -> Dict[str, float]:
+    def train_step(self, trajectories: List["Trajectory"]) -> Dict[str, float]:
+        batch = Batch(trajectories, self.device)
+        batch_data = batch.prepare_tensors()
+        metrics = self._train_step(batch_data.states, batch_data.actions_prob)
+        self.log_metrics(metrics)
+
+
+    def _train_step(self, X: torch.Tensor, y: torch.Tensor) -> Dict[str, float]:
         """Trains the model for multiple epochs and returns a dictionary of KL and MSE losses."""
         if self.root is None:
             self.setup_network(X, y)
@@ -200,6 +209,31 @@ class SoftDecisionTree(nn.Module):
                 nodes.append(node.right)
                 self.param_list.append(node.beta)
                 self.module_list.append(node.fc)
+
+
+
+    def log_metrics(
+            self,
+            metrics: Dict[str, float]
+        ):
+        """Log decision tree loss values"""
+        if self.logger is None:
+            return
+        self.logger.info(f"DecisionTree Loss:   {metrics['actual_loss']:.4f}")
+        self.logger.info(f"    KL Loss:         {metrics['kl_loss']:.4f}")
+        self.logger.info(f"    MSE Loss:        {metrics['mse_loss']:.4f}")
+        self.logger.info(f"    Argmax Acc Loss: {metrics['argmax_acc_loss']:.4f}")
+
+    def set_seed(self, seed):
+        """Ensure all randomness is controlled for reproductibility"""
+        torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed(seed)
+            torch.cuda.manual_seed_all(seed)
+            torch.backends.cudnn.deterministic = True
+            torch.backends.cudnn.benchmark = False
+
+        
 
 
 if __name__ == "__main__":

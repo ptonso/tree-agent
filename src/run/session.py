@@ -9,9 +9,9 @@ from src.run.logger import create_logger
 from src.agent.agent import Agent
 from src.agent.trajectory import Trajectory
 from src.agent.structures import Observation, State, Action
-from src.explain.dtree import DecisionTreeWrapper
 
-from src.explain.visualizer import AutoencoderVisualizer, VisualizerConfig
+from src.explain.soft_tree import SoftDecisionTree, SoftConfig
+from src.explain.visual.visualizer import Visualizer
 
 class Session:
     def __init__(self, config, logger=None):
@@ -22,6 +22,10 @@ class Session:
 
         self.online_trajectories = []
         self.replay_trajectories = []
+
+        self.visualizer = None
+        self.dtree = None
+        self.agent = None
 
         if logger is None:
             log_file = os.path.join("session_log.txt")
@@ -63,14 +67,15 @@ class Session:
                     x_hat = self.agent.world_model.decode(state)
                     saliency = self.agent.world_model.find_objects(observation.as_tensor)[0, 0].cpu().numpy()
 
-                    self.vis.render(
+                    self.visualizer.update(
                         observation=observation.for_render,
-                        embedding=state.for_render,
+                        state=state,
                         decoded=x_hat.for_render,
                         world_model=self.agent.world_model,
-                        state=state,
-                        saliency=saliency
+                        saliency=saliency,
+                        tree=self.dtree
                     )
+                    self.visualizer.render()
 
             trajectory.append(
                 state            = state.state_data,
@@ -162,9 +167,9 @@ class Session:
 
         self.agent = Agent(action_dim=action_dim, state_dim=state_dim, config=self.config, logger=self.logger)
 
-        self.dtree = DecisionTreeWrapper(tree_types=["soft", "sklearn", "rigid"], config=self.config, logger=self.logger)
+        self.dtree = SoftDecisionTree(config=SoftConfig(), logger=self.logger)
 
-        self.vis = AutoencoderVisualizer(config=VisualizerConfig())
+        self.visualizer = Visualizer(window_name="Visualizer")
 
         self.logger.info("Session setup complete.")
 

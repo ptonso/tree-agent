@@ -1,11 +1,16 @@
 import torch
-from typing import List, Literal, Union, Optional
+from typing import List, Literal, Union, Optional, Tuple
 from dataclasses import dataclass, field
+
+
+# BASE CONFIG
 
 @dataclass
 class BaseConfig:
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
     seed:   int = 42
+
+
 
 @dataclass
 class EnvConfig(BaseConfig):
@@ -20,6 +25,8 @@ class EnvConfig(BaseConfig):
     render_height:  int  = 480
     action_dim:     int  = 7
 
+
+# MODELS
 
 @dataclass
 class EncoderConfig(BaseConfig):
@@ -92,7 +99,7 @@ class AgentConfig(BaseConfig):
 
 @dataclass
 class SoftConfig(BaseConfig):
-    depth:       int   = 4
+    depth:       int   = 3
     lr:          float = 0.01
     momentum:    float = 0.5
     lmbda:       float = 0.1
@@ -101,29 +108,49 @@ class SoftConfig(BaseConfig):
     test_size:   float = 0.2
 
 
-@dataclass
-class RigidConfig(BaseConfig):
-    depth:         int = 4
-    test_size:   float = 0.2
+# VISUALIZER
 
 
 @dataclass
-class SKLearnConfig(BaseConfig):
-    criterion: Literal['gini', 'entropy', 'log_loss'] = "gini"
-    max_depth: Optional[int] = None
-    min_samples_split: Union[float, int] = 2
-    min_samples_leaf: Union[float, int] = 1
-    min_weight_fraction_leaf: float = 0
-    max_leaf_nodes: Optional[int] = None
-    min_impurity_decrease: float = 0
-    ccp_alpha: float = 0
+class BaseVisConfig(BaseConfig):
+    bgc: Tuple[int, int, int] = (255, 255, 255)
+    blue: Tuple[int, int, int] = (255, 0, 0)
+    red: Tuple[int, int, int] = (0, 0, 255)
+    embedding_width: int = 80
 
 @dataclass
-class ExplainConfig(BaseConfig):
-    soft: SoftConfig = field(default_factory=SoftConfig)
-    rigid: RigidConfig = field(default_factory=RigidConfig)
-    sklearn: SKLearnConfig = field(default_factory=SKLearnConfig)
-    
+class VAEVisualizerConfig(BaseVisConfig):
+    window_width: int = 760
+    window_height: int = 500
+    main_height: int = 200
+    window_name: str = "Autoencoder"
+    mode: Literal["full", "actual"] = "actual"
+    saliency_mode: bool = True
+
+@dataclass
+class TreeVisualizerConfig(BaseVisConfig):
+    window_width: int = 720
+    window_height: int = 480
+    font_scale: float = 0.5
+    font_thickness: int = 2
+    top_margin: int = 70
+    bottom_margin: int = 70
+    window_name: str = "Soft Decision Tree"
+    show_embed: bool = True
+    show_legend: bool = True
+
+@dataclass
+class OverallVisualizerConfig(BaseVisConfig):
+    window_width: int = 1280
+    window_height: int = 720
+    window_name: str = "Visualizer"
+
+@dataclass
+class VisConfig(BaseVisConfig):
+    vae: VAEVisualizerConfig = field(default_factory=VAEVisualizerConfig)
+    tree: TreeVisualizerConfig = field(default_factory=TreeVisualizerConfig)
+    overall: OverallVisualizerConfig = field(default_factory=OverallVisualizerConfig)
+
 
 @dataclass
 class SessionConfig(BaseConfig):
@@ -147,6 +174,5 @@ class Config(BaseConfig):
     agent: AgentConfig = field(default_factory=AgentConfig)
     session: SessionConfig = field(default_factory=SessionConfig)
     exp: ExpConfig = field(default_factory=ExpConfig)
-    explain: ExplainConfig = field(default_factory=ExplainConfig)
 
 

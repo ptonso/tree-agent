@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from collections import defaultdict
 import logging
 from typing import Optional, List, Dict
 
