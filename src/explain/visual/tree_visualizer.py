@@ -38,12 +38,12 @@ class SoftTreeVisualizer(BaseVisualizer):
         self.tree: Optional[SoftDecisionTree] = None
         self.world_model: Optional[WorldModel] = None
         self.decoded_cache: Dict[InnerNode, np.ndarray] = {}
-        self.embed = np.array([0.])
+        self.embed = np.zeros((1, 64))
 
 
     def update(
             self, 
-            X: torch.Tensor,
+            embed: np.ndarray,
             tree: Optional[SoftDecisionTree] = None,
             world_model: Optional[WorldModel] = None
         ) -> None:
@@ -52,6 +52,7 @@ class SoftTreeVisualizer(BaseVisualizer):
         """
         self.canvas[:] = self.config.bgc
         self.world_model = world_model
+        self.embed = embed
             
         if tree is not None:
             self._initialize_layout(tree)
@@ -59,7 +60,6 @@ class SoftTreeVisualizer(BaseVisualizer):
         if not self.tree or not self.tree.root:
             return
             
-        self.embed = X.cpu().numpy().flatten()
         nodes_list = self._collect_nodes_bfs(self.tree.root)
 
         if self.world_model:
@@ -113,31 +113,39 @@ class SoftTreeVisualizer(BaseVisualizer):
 
     def _compute_layout(self) -> NodeLayout:
         num_leaves = self.level_counts[self.max_depth]
-        usable_width = self.config.window_width - 2 * (self.config.window_width // 20)
-        leaf_width = max(20, min(60, usable_width // max(1, num_leaves)))
+        
+        usable_width = self.config.window_width - 2 * self.config.lateral_margin
+        usable_height = self.config.window_height - 2 * self.config.top_margin
 
+        max_nodes_at_any_level= max(self.level_counts)
+        max_leaf_nodes = self.level_counts[self.max_depth]
 
-        level_widths = [int(leaf_width * (1 + (self.max_depth - level) * 0.15))
+        node_width = usable_width // max(max_nodes_at_any_level, 1)
+        level_height = usable_height // max(self.max_depth + 1, 1)
+        node_height = min(level_height * 0.6, node_width)
+
+        level_widths = [int(node_width * (1 + (self.max_depth - level) * 0.15))
                         for level in range(self.max_depth + 1)]
         
-        x_positions = [[(i + 1) * (usable_width // (count + 1)) + (self.config.window_width // 20)
-                        for i in range(count)] if count > 0 else []
-                       for count in self.level_counts]
-        
-        leaf_height = max(
-            40,
-            min(
-                80,
-                (self.config.window_height
-                 - self.config.top_margin
-                 - self.config.bottom_margin)
-                // max(1, (self.max_depth * 2))
-            )
-        )
+        x_positions = []
+        for level, count in enumerate(self.level_counts):
+            if count == 0:
+                x_positions.append([])
+                continue
+            if count == 1:
+                x_positions.append([self.config.window_width // 2])
+            else:
+                spacing = usable_width / (count + 1)
+                level_positions = [
+                    int(self.config.lateral_margin + (i + 1) * spacing)
+                    for i in range(count)
+                ]
+                x_positions.append(level_positions)
+
 
         return NodeLayout(
-            width=leaf_width,
-            height=leaf_height,
+            width=int(node_width * 0.8),
+            height=int(node_height),
             x_positions=x_positions,
             level_widths=level_widths
         )
@@ -157,24 +165,25 @@ class SoftTreeVisualizer(BaseVisualizer):
                 queue.append((node.right, depth + 1, idx * 2 + 1))
         return out
 
-    def _batch_decode_and_resize(
-            self, 
-            nodes_list: List[Tuple[Any, int, int]]
-            ) -> None:
+    def _batch_decode_and_resize(self, nodes_list: List[Tuple[Any, int, int]]) -> None:
         inner_nodes = [
-            (node, idx) 
-            for node, _, idx in nodes_list 
+            (node, depth, idx) 
+            for node, depth, idx in nodes_list 
             if isinstance(node, InnerNode)
             ]
         
         if not inner_nodes:
             return
         
+        node_size = min(self.layout.width, self.layout.height)
+        img_size = max(16, min(64, int(node_size * 0.9)))
+
+        
         wx_list = [
             node.fc.weight.detach().cpu().numpy().flatten() \
                 * node.beta.detach().cpu().item() \
                 * self.embed
-                for node, _ in inner_nodes
+                for node, _, _ in inner_nodes
             ]
         
         wx_array = np.array(wx_list, dtype=np.float32)
@@ -182,8 +191,9 @@ class SoftTreeVisualizer(BaseVisualizer):
 
         decoded_obs = self.world_model.decode(wx_state)
 
-        for (node, _), img in zip(inner_nodes, decoded_obs.for_render):
-            self.decoded_cache[node] = self.resize_image(image=img, width=64, height=64)
+        for (node, _, _), img in zip(inner_nodes, decoded_obs.for_render):
+            self.decoded_cache[node] = self.resize_image(image=img, width=img_size, height=img_size)
+
 
     def _draw_all_edges(self, nodes_list: List[Tuple[Any, int, int]]) -> None:
         for node, depth, idx in nodes_list:
@@ -205,14 +215,25 @@ class SoftTreeVisualizer(BaseVisualizer):
         else:
             if node in self.decoded_cache:
                 img = self.decoded_cache[node]
-                
-                if len(img.shape) == 2:
-                    img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
-
-                self.canvas[y - 32:y + 32, x - 32:x + 32] = img
             else:
-                embed_img = self._build_embed_image(node, x, y)
-                self.canvas[y - 32:y + 32, x - 32:x + 32] = embed_img
+                img = self._build_embed_image(node, x, y)
+
+            img_h, img_w = img.shape[:2]
+            canvas_h, canvas_w = self.canvas.shape[:2]
+
+            top = max(0, min(canvas_h - img_h, y - img_h // 2))
+            left = max(0, min(canvas_w - img_w, x - img_w // 2))
+            bottom = min(canvas_h, top + img_h)
+            right = min(canvas_w, left + img_w)
+
+            if bottom - top != img_h or right - left != img_w:
+                img = img[:bottom-top, :right-left]
+
+            try:
+                self.canvas[top:bottom, left:right] = img
+            except ValueError as e:
+                self.logger.warning(f"Error drawing node at ({x}, {y}): {e}")
+
 
     def _resize_image(self, img: np.ndarray, width: int, height: int) -> np.ndarray:
         return cv2.resize(img, (width, height), interpolation=cv2.INTER_AREA)
@@ -231,7 +252,10 @@ class SoftTreeVisualizer(BaseVisualizer):
             node_index = len(self.layout.x_positions[depth]) - 1
 
         x = self.layout.x_positions[depth][node_index]
-        y = self.config.top_margin + depth * 100
+
+        usable_height = self.config.window_height - 2 * self.config.top_margin
+        level_height = usable_height / (self.max_depth + 1)
+        y = int(self.config.top_margin + depth * level_height + (level_height / 2))
         return (x, y)
 
 
@@ -254,7 +278,7 @@ class SoftTreeVisualizer(BaseVisualizer):
             (0, 0, 0),
             self.config.font_thickness
         )
-
+        embed = embed[0]
         box_size = max(50, min(self.config.window_width, self.config.window_height) // 6)
 
         length = len(embed)
@@ -494,17 +518,6 @@ class SoftTreeVisualizer(BaseVisualizer):
                 (0, 0, 0),
                 1
             )
-
-
-    def _get_level_y(self, depth: int) -> int:
-        total_levels = self.max_depth + 1
-        if total_levels <= 1:
-            return self.config.top_margin
-        fraction = depth / (total_levels - 1)
-        used_h = (self.config.window_height
-                  - self.config.top_margin
-                  - self.config.bottom_margin)
-        return int(self.config.top_margin + fraction * used_h)
 
 
 if __name__ == "__main__":

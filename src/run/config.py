@@ -117,11 +117,14 @@ class BaseVisConfig(BaseConfig):
     blue: Tuple[int, int, int] = (255, 0, 0)
     red: Tuple[int, int, int] = (0, 0, 255)
     embedding_width: int = 80
+    top_margin: int = 30
+    lateral_margin: int = 30
+
 
 @dataclass
 class VAEVisualizerConfig(BaseVisConfig):
-    window_width: int = 760
-    window_height: int = 500
+    window_width: int = 720
+    window_height: int = 480
     main_height: int = 200
     window_name: str = "Autoencoder"
     mode: Literal["full", "actual"] = "actual"
@@ -131,10 +134,8 @@ class VAEVisualizerConfig(BaseVisConfig):
 class TreeVisualizerConfig(BaseVisConfig):
     window_width: int = 720
     window_height: int = 480
-    font_scale: float = 0.5
-    font_thickness: int = 2
-    top_margin: int = 70
-    bottom_margin: int = 70
+    font_scale: float = 0.7
+    font_thickness: int = 1
     window_name: str = "Soft Decision Tree"
     show_embed: bool = True
     show_legend: bool = True

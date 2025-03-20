@@ -35,9 +35,9 @@ class Visualizer(BaseVisualizer):
             saliency: Optional[np.ndarray] = None,
             tree: Optional["SoftDecisionTree"] = None
         ) -> None:
-        embedding = state.as_tensor
+        embedding = state.state_data
         self.tree_visualizer.update(
-            X=embedding, tree=tree, 
+            embed=embedding, tree=tree, 
             world_model=world_model
             )
         self.vae_visualizer.update(

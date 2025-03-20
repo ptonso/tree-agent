@@ -7,16 +7,9 @@ from typing import List, Tuple, Optional, Literal
 
 from src.agent.structures import State
 from src.explain.visual.base_visualizer import BaseVisualizer
+from src.run.config import VAEVisualizerConfig
 
-@dataclass
-class VAEVisualizerConfig:
-    window_width: int = 760
-    main_height: int = 200
-    var_grid_height: int = 300
-    embedding_width: int = 40
-    window_name: str = "Autoencoder"
-    mode: Literal["full", "actual"] = "full"
-    saliency_mode: bool = True
+
 
 class VAEVisualizer(BaseVisualizer):
     """
@@ -75,8 +68,9 @@ class VAEVisualizer(BaseVisualizer):
         variation_grid = self.resize_image(image=variation_grid, width=final_width)
         
         visualization = np.vstack([main_row, spacer, variation_grid])
-        self.canvas = visualization
 
+        self.canvas = self._add_margin(visualization)
+        
 
     def _update_actual(
         self,
@@ -85,8 +79,8 @@ class VAEVisualizer(BaseVisualizer):
         decoded: np.ndarray
     ) -> None:
         main_row = self._build_main_row(observation, embedding, decoded)
-        self.canvas = main_row
-
+        self.canvas = self._add_margin(main_row)
+        
 
     def _apply_saliency_overlay(
             self,
@@ -103,6 +97,15 @@ class VAEVisualizer(BaseVisualizer):
         overlay = cv2.addWeighted(grayscale, 0.5, saliency_colormap, 0.5, 0)
         return overlay
 
+    def _add_margin(self, image: np.ndarray) -> np.ndarray:
+        """Adds a top and lateral margin to the image."""
+        top = self.config.top_margin
+        lateral = self.config.lateral_margin
+        return cv2.copyMakeBorder(
+            image, 
+            top=top, bottom=top, left=lateral, right=lateral,
+            borderType=cv2.BORDER_CONSTANT, value=self.config.bgc
+        )
 
     def _generate_latent_variations(
         self,
