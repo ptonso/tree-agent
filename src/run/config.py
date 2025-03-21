@@ -66,8 +66,8 @@ class WorldModelConfig(BaseConfig):
     beta_dym:        float  = 0.001
     beta_rep:        float  = 0.0001
     horizon:         int    = 0
-    saliency_bonus:  float  = 2.0
-    blur_kernel:     int    = 5
+    saliency_bonus:  float  = 3.0
+    blur_kernel:     int    = 3
     free_nats:    float  = 1.00
     gradient_clipping: float = 0.5
     encoder: EncoderConfig = EncoderConfig()
@@ -99,13 +99,15 @@ class AgentConfig(BaseConfig):
 
 @dataclass
 class SoftConfig(BaseConfig):
-    depth:       int   = 3
-    lr:          float = 0.01
-    momentum:    float = 0.5
-    lmbda:       float = 0.1
-    num_epochs:  int   = 10
-    batch_size:  int   = 64
-    test_size:   float = 0.2
+    depth:        int   = 3
+    lr:           float = 0.01
+    beta_uniform: float = 0.1
+    beta_mse:     float = 0.0
+    momentum:     float = 0.5
+    lmbda:        float = 0.1
+    num_epochs:   int   = 10
+    batch_size:   int   = 64
+    test_size:    float = 0.2
 
 
 # VISUALIZER
@@ -116,9 +118,9 @@ class BaseVisConfig(BaseConfig):
     bgc: Tuple[int, int, int] = (255, 255, 255)
     blue: Tuple[int, int, int] = (255, 0, 0)
     red: Tuple[int, int, int] = (0, 0, 255)
-    embedding_width: int = 80
-    top_margin: int = 30
-    lateral_margin: int = 30
+    embedding_width: int = 100
+    top_margin: int = 20
+    lateral_margin: int = 20
 
 
 @dataclass
@@ -133,17 +135,20 @@ class VAEVisualizerConfig(BaseVisConfig):
 @dataclass
 class TreeVisualizerConfig(BaseVisConfig):
     window_width: int = 720
-    window_height: int = 480
-    font_scale: float = 0.7
+    window_height: int = 680
+    font_scale: float = 0.5
     font_thickness: int = 1
     window_name: str = "Soft Decision Tree"
     show_embed: bool = True
-    show_legend: bool = True
+    show_legend: bool = False
+    show_prob_text: bool = True
+    show_label: bool = True
+    img_size: int = 120 # [16..256]
 
 @dataclass
 class OverallVisualizerConfig(BaseVisConfig):
     window_width: int = 1280
-    window_height: int = 720
+    window_height: int = 850
     window_name: str = "Visualizer"
 
 @dataclass
@@ -161,6 +166,9 @@ class SessionConfig(BaseConfig):
     seed: int       = 42
     render: bool    = True
     vae_vis: bool   = False
+    online_buffer: int = 2
+    replay_buffer: int = 8
+
 
 @dataclass
 class ExpConfig(BaseConfig):

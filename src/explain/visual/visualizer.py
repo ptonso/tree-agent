@@ -35,21 +35,37 @@ class Visualizer(BaseVisualizer):
             saliency: Optional[np.ndarray] = None,
             tree: Optional["SoftDecisionTree"] = None
         ) -> None:
-        embedding = state.state_data
-        self.tree_visualizer.update(
-            embed=embedding, tree=tree, 
-            world_model=world_model
-            )
+
+        full_background = self._create_background()
+
+        if self.mode == "full":
+            mid = full_background.shape[1] // 2
+            vae_bg = full_background[:, :mid, :].copy()
+            tree_bg = full_background[:, mid:, :].copy()
+        elif self.mode == "actual":
+            mid = full_background.shape[0] // 2
+            vae_bg = full_background[:mid, :, :].copy()
+            tree_bg = full_background[mid:, :, :].copy()
+        else:
+            raise ValueError(f"Unkown mode: {self.mode}")
+
         self.vae_visualizer.update(
             observation, state, decoded,
-            world_model=world_model, saliency=saliency
+            world_model=world_model, 
+            saliency=saliency,
+            # background=vae_bg
+            )
+        self.tree_visualizer.update(
+            embed=state.state_data, 
+            tree=tree, 
+            world_model=world_model,
+            # background=tree_bg
             )
         
         tree_canvas = self.tree_visualizer.get_numpy()
         vae_canvas = self.vae_visualizer.get_numpy()
 
         if self.mode == "full":
-
             # merge side by side
             target_height = max(tree_canvas.shape[0], vae_canvas.shape[0])
             tree_canvas_resized = self.tree_visualizer.resize_image(width=tree_canvas.shape[1], height=target_height)
@@ -70,6 +86,21 @@ class Visualizer(BaseVisualizer):
             width=self.config.window_width, 
             height=self.config.window_height
             )
+        
+    
+    def _create_background(self) -> np.ndarray:
+        """Create a shared gradient background."""
+        h, w = self.config.window_height, self.config.window_width
+        gradient = np.linspace(100, 230, h, dtype=np.uint8)[:, np.newaxis]
+        gradient = np.repeat(gradient, w, axis=1)
+
+        blue = np.clip(gradient + 25, 0, 255)
+        green = np.clip(gradient - 30, 0, 255)
+        red = np.clip(gradient - 50, 0, 255)
+
+        return cv2.merge([blue, green, red])
+
+
 
 
 if __name__ == "__main__":

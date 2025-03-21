@@ -51,6 +51,7 @@ class SoftTreeVisualizer(BaseVisualizer):
         Updates the tree visualization dynamically.
         """
         self.canvas[:] = self.config.bgc
+        
         self.world_model = world_model
         self.embed = embed
             
@@ -175,9 +176,8 @@ class SoftTreeVisualizer(BaseVisualizer):
         if not inner_nodes:
             return
         
-        node_size = min(self.layout.width, self.layout.height)
-        img_size = max(16, min(64, int(node_size * 0.9)))
-
+        node_size = max(self.layout.width, self.layout.height)
+        img_size = min(node_size, max(16, min(256, self.config.img_size)))
         
         wx_list = [
             node.fc.weight.detach().cpu().numpy().flatten() \
@@ -196,6 +196,10 @@ class SoftTreeVisualizer(BaseVisualizer):
 
 
     def _draw_all_edges(self, nodes_list: List[Tuple[Any, int, int]]) -> None:
+        cumulative_probs = {}
+        cumulative_probs[self.tree.root] = 1.0
+        leaf_probs = {}
+
         for node, depth, idx in nodes_list:
             if isinstance(node, InnerNode):
                 x, y = self._get_node_position(depth, idx)
@@ -205,8 +209,22 @@ class SoftTreeVisualizer(BaseVisualizer):
                 device = next(node.fc.parameters()).device
                 embed_tensor = torch.tensor(self.embed, dtype=torch.float32, device=device).unsqueeze(0)
                 prob_right = node.forward(embed_tensor).item()
-                self._draw_edge(x, y, lx, ly, 1 - prob_right)
-                self._draw_edge(x, y, rx, ry, prob_right)
+                prob_left = 1 - prob_right
+
+                parent_prob = cumulative_probs.get(node, 1.0)
+                cumulative_probs[node.left] = parent_prob * prob_left
+                cumulative_probs[node.right] = parent_prob * prob_right
+                
+                self._draw_edge(x, y, lx, ly, cumulative_probs[node.left])
+                self._draw_edge(x, y, rx, ry, cumulative_probs[node.right])
+            elif isinstance(node, LeafNode):
+                leaf_probs[node] = cumulative_probs.get(node, 0.0)
+            
+            if leaf_probs:
+                self.most_probable_leaf = max(leaf_probs, key=leaf_probs.get)
+            else:
+                self.most_probable_leaf = None
+
 
     def _draw_inner_node(self, node: Any, depth: int, idx: int) -> None:
         x, y = self._get_node_position(depth, idx)
@@ -489,8 +507,11 @@ class SoftTreeVisualizer(BaseVisualizer):
             cy: int,
             width: int,
             height: int
-            ) -> None:
+        ) -> None:
+        """Visualizes the leaf node with labeled action probabilities."""
+
         action_probs = torch.softmax(node.param, dim=0).detach().cpu().numpy()
+        label_names = ["forward", "left", "right"]
         n_actions = len(action_probs)
 
         w_box = width
@@ -498,26 +519,67 @@ class SoftTreeVisualizer(BaseVisualizer):
         tl_x = cx - w_box // 2
         tl_y = cy - (h_box * n_actions // 2)
 
+        cmap = cv2.COLORMAP_VIRIDIS
+        max_prob = max(action_probs)
+
         for i, prob in enumerate(action_probs):
             alpha = float(prob)
+            norm_alpha = int((alpha / max_prob) * 255) # [0..255] colormap
             blue = np.array(self.config.blue, dtype=np.float32)
-            color = self.blend(alpha, blue)
+            color_map = cv2.applyColorMap(np.array([[norm_alpha]], dtype=np.uint8), cmap)
+            color = tuple(int(x) for x in color_map[0][0])
 
             y1 = tl_y + i * h_box
             cv2.rectangle(
-                self.canvas,
-                (tl_x, y1),
+                self.canvas, (tl_x, y1), 
                 (tl_x + w_box, y1 + h_box),
-                tuple(int(k) for k in color),
-                -1
+                tuple(int(k) for k in color), -1
             )
             cv2.rectangle(
-                self.canvas,
-                (tl_x, y1),
+                self.canvas, (tl_x, y1), 
                 (tl_x + w_box, y1 + h_box),
-                (0, 0, 0),
-                1
+                (0, 0, 0), 1
             )
+
+            if self.config.show_prob_text:
+                prob_text = f"{alpha:.2f}"
+                text_x = tl_x + w_box // 2 - 10
+                text_y = y1 + h_box // 2 + 5
+                cv2.putText(
+                    self.canvas, prob_text, (text_x, text_y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA
+                )
+
+            if self.config.show_label:
+                label_x = tl_x - 60
+                label_y = y1 + h_box // 2 + 5
+                cv2.putText(
+                    self.canvas, label_names[i], (label_x, label_y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1, cv2.LINE_AA
+                )
+
+
+        if self.most_probable_leaf == node:
+            # border for most probable leaf
+            cv2.rectangle(
+                self.canvas, (tl_x - 2, tl_y - 2),
+                (tl_x + w_box + 2, tl_y + h_box * n_actions + 2),
+                (0, 0, 0), 3
+                )
+
+    def _apply_background_gradient(self) -> None:
+        """Creates a visually appealing gradient background."""
+        rows, cols, _ = self.canvas.shape
+        gradient = np.linspace(100, 230, rows, dtype=np.uint8)[:, np.newaxis]
+        gradient = np.repeat(gradient, cols, axis=1)
+
+        # Convert to a color image (blueish gradient)
+        blue_channel = np.clip(gradient + 25, 0, 255)
+        green_channel = np.clip(gradient - 30, 0, 255)
+        red_channel = np.clip(gradient - 50, 0, 255)
+
+        self.canvas[:] = cv2.merge([blue_channel, green_channel, red_channel])
+
 
 
 if __name__ == "__main__":

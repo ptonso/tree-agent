@@ -31,8 +31,8 @@ class VAEVisualizer(BaseVisualizer):
         world_model: Optional["WorldModel"] = None,
         saliency: Optional[np.ndarray] = None
         ) -> None:
-        
         embedding = state.for_render
+        
         if self.config.saliency_mode and saliency is not None:
             with torch.no_grad():
                 observation = self._apply_saliency_overlay(observation, saliency)
@@ -153,6 +153,7 @@ class VAEVisualizer(BaseVisualizer):
         image_width = (total_width - emb_width - 2 * spacer_width) // 2
         height = self.config.main_height
 
+        observation = cv2.cvtColor(observation, cv2.COLOR_RGB2BGR)        
         obs_resized = self.resize_image(image=observation, height=height, width=image_width)
         dec_resized = self.resize_image(image=decoded, height=height, width=image_width)
         
@@ -243,6 +244,8 @@ class VAEVisualizer(BaseVisualizer):
         #     width=self.config.embedding_width, 
         #     height=height
         #     )
+
+
 
 
 if __name__ == "__main__":

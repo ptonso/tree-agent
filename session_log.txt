@@ -1,26 +1,10 @@
-2025-03-19 22:10:52,853 - INFO - Logger intialized. Writing to session_log.txt
-2025-03-19 22:10:52,854 - INFO - Random seed set to 42
-2025-03-19 22:10:52,868 - INFO - Using CUDA device: 0
-2025-03-19 22:10:52,868 - INFO - Total GPU Memory:      1870.69 MB
-2025-03-19 22:10:52,868 - INFO - CUDA memory allocated:   0.00 MB
-2025-03-19 22:10:52,868 - INFO - CUDA memory reserved:    0.00 MB
-2025-03-19 22:10:54,429 - INFO - Session setup complete.
-2025-03-19 22:11:03,238 - INFO - -----------------------------------
-2025-03-19 22:11:03,238 - INFO - Episode 001: Total Reward = 2.0
-2025-03-19 22:11:03,238 - INFO - -----------------------------------
-2025-03-19 22:11:05,213 - INFO - World Model Loss:    0.0473
-2025-03-19 22:11:05,214 - INFO -     Recon Loss:      0.0473
-2025-03-19 22:11:05,214 - INFO -     Reward Loss:     0.0000
-2025-03-19 22:11:05,214 - INFO -     Continue Loss:   0.0000
-2025-03-19 22:11:05,214 - INFO -     Dyn Loss:        0.0000
-2025-03-19 22:11:05,214 - INFO -     Rep Loss:        0.0000
-2025-03-19 22:11:05,387 - INFO - Agent Loss:          0.1739
-2025-03-19 22:11:05,387 - INFO -     Actor Loss:      -0.0540
-2025-03-19 22:11:05,387 - INFO -     Critic Loss:     0.2279
-2025-03-19 22:11:06,428 - INFO - DecisionTree Loss:   0.3212
-2025-03-19 22:11:06,428 - INFO -     KL Loss:         0.3212
-2025-03-19 22:11:06,428 - INFO -     MSE Loss:        0.0684
-2025-03-19 22:11:06,428 - INFO -     Argmax Acc Loss: 0.4336
-2025-03-19 22:11:14,868 - INFO - -----------------------------------
-2025-03-19 22:11:14,869 - INFO - Episode 002: Total Reward = 8.0
-2025-03-19 22:11:14,869 - INFO - -----------------------------------
+2025-03-21 20:39:01,611 - INFO - Logger intialized. Writing to session_log.txt
+2025-03-21 20:39:01,613 - INFO - Random seed set to 42
+2025-03-21 20:39:01,644 - INFO - Using CUDA device: 0
+2025-03-21 20:39:01,644 - INFO - Total GPU Memory:      1870.69 MB
+2025-03-21 20:39:01,644 - INFO - CUDA memory allocated:   0.00 MB
+2025-03-21 20:39:01,644 - INFO - CUDA memory reserved:    0.00 MB
+2025-03-21 20:39:03,078 - INFO - Session setup complete.
+2025-03-21 20:39:13,695 - INFO - -----------------------------------
+2025-03-21 20:39:13,695 - INFO - Episode 001: Total Reward = 2.0
+2025-03-21 20:39:13,695 - INFO - -----------------------------------

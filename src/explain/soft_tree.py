@@ -116,19 +116,20 @@ class SoftDecisionTree(nn.Module):
         X_train, X_val = X[:split_idx], X[split_idx:]
         y_train, y_val = y[:split_idx], y[split_idx:]
 
-        best_kl_loss, best_mse_loss, best_argmax_acc_loss = float('inf'), float('inf'), float('inf')
+        best_total_loss, best_kl_loss, best_mse_loss, best_argmax_acc_loss, best_unif_kl_loss = float('inf'), float('inf'), float('inf'), float('inf'), float('inf')
 
         for _ in range(self.num_epochs):
             train_kl = self._train_epoch(X_train, y_train)
-            val_kl, val_mse, val_acc = self._evaluate(X_val, y_val)
+            val_total, val_kl, val_mse, val_acc, val_unif = self._evaluate(X_val, y_val)
 
-            if val_kl < best_kl_loss:
-                best_kl_loss, best_mse_loss, best_argmax_acc_loss = val_kl, val_mse, val_acc
+            if val_total < best_total_loss:
+                best_total_loss, best_kl_loss, best_mse_loss, best_argmax_acc_loss, best_unif_kl_loss = val_total, val_kl, val_mse, val_acc, val_unif
 
         return {
-            "actual_loss": best_kl_loss, 
+            "actual_loss": best_total_loss, 
             "kl_loss": best_kl_loss, 
             "mse_loss": best_mse_loss,
+            'uniform_kl_loss': best_unif_kl_loss,
             "argmax_acc_loss" : best_argmax_acc_loss
             }
 
@@ -136,36 +137,38 @@ class SoftDecisionTree(nn.Module):
         """Trains for one epoch and returns KL loss."""
         self.train()
         indices = torch.randperm(len(X))
-        total_kl = 0
+        total = 0
 
         for start in range(0, len(X), self.batch_size):
             batch_indices = indices[start:start + self.batch_size]
             batch_X, batch_y = X[batch_indices].to(self.device), y[batch_indices].to(self.device)
 
             self.optimizer.zero_grad()
-            kl_loss, _, _ = self.cal_loss(batch_X, batch_y)
-            kl_loss.backward()
+            total_loss, _, _, _, _ = self.cal_loss(batch_X, batch_y)
+            total_loss.backward()
             self.optimizer.step()
 
-            total_kl += kl_loss.item()
+            total += total_loss.item()
 
-        return total_kl / (len(X) / self.batch_size)
+        return total / (len(X) / self.batch_size)
 
     def _evaluate(self, X: torch.Tensor, y: torch.Tensor) -> Tuple[float, float]:
         """Evaluates KL and MSE loss on validation set."""
         self.eval()
-        total_kl, total_mse, total_acc = 0, 0, 0
+        total, total_kl, total_mse, total_acc, total_unif = 0, 0, 0, 0, 0
 
         with torch.no_grad():
             for start in range(0, len(X), self.batch_size):
                 batch_X, batch_y = X[start:start + self.batch_size].to(self.device), y[start:start + self.batch_size].to(self.device)
-                kl_loss, mse_loss, acc_loss = self.cal_loss(batch_X, batch_y)
+                total_loss, kl_loss, mse_loss, acc_loss, unif_loss = self.cal_loss(batch_X, batch_y)
+                total += total_loss.item()
                 total_kl += kl_loss.item()
                 total_mse += mse_loss.item()
                 total_acc += acc_loss.item()
+                total_unif += unif_loss.item()
 
         k = (len(X) / self.batch_size)
-        return total_kl / k, total_mse / k, total_acc / k
+        return total / k, total_kl / k, total_mse / k, total_acc / k, total_unif / k
     
 
     def cal_loss(self, X: torch.Tensor, y: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, float]:
@@ -173,15 +176,26 @@ class SoftDecisionTree(nn.Module):
         batch_size = y.size(0)
         leaf_accumulator = self.root.cal_prob(X, torch.ones(batch_size, 1, device=self.device))
 
-        kl_loss, mse_loss = 0, 0
+        kl_loss, mse_loss, kl_uniform_loss = 0, 0, 0
         correct, total_weight = 0, 0
 
+        num_classes = y.size(1)
+        uniform_dist = torch.full_like(y, 1.0 / num_classes)
+
         for path_prob, Q in leaf_accumulator:
+            
+            # KL divergence between predicted and true label
             kl_div = F.kl_div(Q.log(), y, reduction='batchmean')
+            
+            # KL divergence between predicted and uniform
+            kl_div_uniform = F.kl_div(Q.log(), uniform_dist, reduction='batchmean')
+
+            # MSE loss
             mse = F.mse_loss(Q, y)
 
             kl_loss += (path_prob * kl_div).sum()
             mse_loss += (path_prob * mse).sum()
+            kl_uniform_loss += (path_prob * kl_div_uniform).sum()
 
             pred_class = Q.argmax(dim=1)
             true_class = y.argmax(dim=1)
@@ -191,7 +205,9 @@ class SoftDecisionTree(nn.Module):
             total_weight += weight.sum()
 
         argmax_accuracy = correct / total_weight if total_weight > 0 else 0
-        return kl_loss / batch_size, mse_loss / batch_size, argmax_accuracy
+        total_loss = kl_loss - self.config.beta_uniform * kl_uniform_loss + self.config.beta_mse * mse_loss
+        
+        return total_loss / batch_size, kl_loss / batch_size, mse_loss / batch_size, kl_uniform_loss / batch_size, argmax_accuracy
 
 
     def collect_parameters(self):
@@ -222,6 +238,7 @@ class SoftDecisionTree(nn.Module):
         self.logger.info(f"DecisionTree Loss:   {metrics['actual_loss']:.4f}")
         self.logger.info(f"    KL Loss:         {metrics['kl_loss']:.4f}")
         self.logger.info(f"    MSE Loss:        {metrics['mse_loss']:.4f}")
+        self.logger.info(f"    Uniform KL Loss: {metrics['uniform_kl_loss']:.4f}")
         self.logger.info(f"    Argmax Acc Loss: {metrics['argmax_acc_loss']:.4f}")
 
     def set_seed(self, seed):

@@ -65,14 +65,14 @@ class Session:
 
                 with torch.no_grad():
                     x_hat = self.agent.world_model.decode(state)
-                    saliency = self.agent.world_model.find_objects(observation.as_tensor)[0, 0].cpu().numpy()
+                    # saliency = self.agent.world_model.find_objects(observation.as_tensor)[0, 0].cpu().numpy()
 
                     self.visualizer.update(
                         observation=observation.for_render,
                         state=state,
                         decoded=x_hat.for_render,
                         world_model=self.agent.world_model,
-                        saliency=saliency,
+                    #     saliency=saliency,
                         tree=self.dtree
                     )
                     self.visualizer.render()
@@ -104,9 +104,6 @@ class Session:
         agent_metrics = {}
         dtree_metrics = {}
 
-        WORLD_MODEL_TRAJECTORIES_IN_BATCH = 1
-        ACTOR_CRITIC_TRAJECTORIES_IN_BATCH = 1
-
         for episode in range(self.config.session.n_episodes):
             episode_reward, trajectory = self.run_episode(episode)
             total_rewards.append(episode_reward)
@@ -116,19 +113,19 @@ class Session:
             self.logger.info(f"Episode {episode + 1:03d}: Total Reward = {episode_reward}")
             self.logger.info("-"*35)
 
-            if len(self.online_trajectories) >= WORLD_MODEL_TRAJECTORIES_IN_BATCH:
+            if len(self.online_trajectories) >= self.config.session.online_buffer:
                 wm_train_metrics = self.agent.world_model.train_step(self.online_trajectories)
                 self.transfer_to_replay(self.online_trajectories)
                 self.online_trajectories = []
                 wm_metrics[episode] = wm_train_metrics
 
-            if len(self.replay_trajectories) >= ACTOR_CRITIC_TRAJECTORIES_IN_BATCH:
+            if len(self.replay_trajectories) >= self.config.session.replay_buffer:
                 agent_train_metrics = self.agent.train_step(self.replay_trajectories)
                 dtree_train_metrics = self.dtree.train_step(self.replay_trajectories)
-                self.replay_trajectories = []
                 agent_metrics[episode] = agent_train_metrics
                 dtree_metrics[episode] = dtree_train_metrics
-
+                self.replay_trajectories = []
+                
         self.env.close()
         return total_rewards, wm_metrics, agent_metrics, dtree_metrics
 

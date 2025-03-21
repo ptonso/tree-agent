@@ -1,4 +1,5 @@
 import torch
+import cv2
 import numpy as np
 from typing import Optional, Tuple, List
 
@@ -113,6 +114,7 @@ class Observation:
                 img = np.transpose(self.obs_data[i], (1, 2, 0))
                 img = (img + 0.5) * 255. 
                 img = np.clip(img, 0, 255).astype(np.uint8)
+                img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)        
                 self._for_render.append(img)
 
         if len(self._for_render) == 1:
