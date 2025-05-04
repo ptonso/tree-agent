@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any, List, Tuple, Optional, Dict
 
 from src.run.logger import create_logger
-from src.run.config import SoftConfig
+from src.run.config import TreeVisualizerConfig, SoftConfig
 from src.explain.soft_tree import SoftDecisionTree, InnerNode, LeafNode
 from src.explain.visual.base_visualizer import BaseVisualizer
 from src.agent.world_model import WorldModel
@@ -23,13 +23,14 @@ class NodeLayout:
 
 class SoftTreeVisualizer(BaseVisualizer):
     """
-    Visualizes a differentiable decision tree.
+    Visualizes a differentiable decision tree, with a bottom histogram
+    showing the cumulative probability of ending up in each leaf.
     """
-    def __init__(self, config: "TreeVisualizerConfig") -> None:
+    def __init__(self, config: TreeVisualizerConfig) -> None:
         super().__init__(config)
-        self.logger = create_logger("api.log")
-
+        self.logger = create_logger("tree_viz.log")
         self.config = config
+        self.hist_height = int(self.config.window_height * 0.12) + 10
         self.canvas = np.full(
             (config.window_height, config.window_width, 3),
             config.bgc,
@@ -38,25 +39,24 @@ class SoftTreeVisualizer(BaseVisualizer):
         self.tree: Optional[SoftDecisionTree] = None
         self.world_model: Optional[WorldModel] = None
         self.decoded_cache: Dict[InnerNode, np.ndarray] = {}
-        self.embed = np.zeros((1, 64))
+        self.embed = np.zeros((1, config.embedding_width))
         self.labeled: bool = False
-
+        self.leaf_probs: Dict[LeafNode, float] = {}
 
     def update(
-            self, 
-            embed: np.ndarray,
-            tree: Optional[SoftDecisionTree] = None,
-            world_model: Optional[WorldModel] = None
-        ) -> None:
+        self,
+        embed: np.ndarray,
+        tree: Optional[SoftDecisionTree] = None,
+        world_model: Optional[WorldModel] = None
+    ) -> None:
         """
         Updates the tree visualization dynamically.
         """
         self.labeled = False
         self.canvas[:] = self.config.bgc
-        
         self.world_model = world_model
         self.embed = embed
-            
+
         if tree is not None:
             self._initialize_layout(tree)
 
@@ -67,593 +67,402 @@ class SoftTreeVisualizer(BaseVisualizer):
 
         if self.world_model:
             self._batch_decode_and_resize(nodes_list)
-        
-        self._draw_all_edges(nodes_list)
 
+        self._draw_all_edges(nodes_list)
         for node, depth, idx in nodes_list:
             self._draw_inner_node(node, depth, idx)
 
-        self.metric = tree.metric
-        if self.metric is not None:
+        if hasattr(tree, 'metric') and tree.metric is not None:
             self._draw_metric()
 
+        # Draw the leaf-probability histogram at the bottom
+        self._draw_leaf_prob_histogram()
 
     def _initialize_layout(self, tree: SoftDecisionTree):
-        """Everything that is needed to rebuild the layout
-        given a new tree."""
         if tree.root is None:
             return
-        
         self.tree = tree
         self.max_depth = self.tree.max_depth
         self.level_counts = self._compute_level_counts()
         self.layout = self._compute_layout()
 
-        root_x, root_y = self._get_node_position(0, 0)
-        offset_y = 150
-
-        if self.config.show_embed:
-            self._draw_input(
-                self.embed,
-                x_left=int(root_x * 0.2),
-                y_top=max(30, root_y - offset_y),
-            )
-
-        if self.config.show_legend:
-            self._draw_legend(
-                x_left=int(root_x * 1.5),
-                y_top=max(30, root_y - offset_y)
-            )
-
     def _compute_level_counts(self) -> List[int]:
         counts = [0] * (self.max_depth + 2)
-        def recurse(node: Any, depth: int) -> None:
+        def recurse(node: Any, depth: int):
             if node is None:
                 return
             counts[depth] += 1
             if isinstance(node, InnerNode):
-                recurse(node.left, depth + 1)
-                recurse(node.right, depth + 1)
-
+                recurse(node.left, depth+1)
+                recurse(node.right, depth+1)
         recurse(self.tree.root, 0)
         return counts
 
     def _compute_layout(self) -> NodeLayout:
-        num_leaves = self.level_counts[self.max_depth]
-        
-        usable_width = self.config.window_width - 2 * self.config.lateral_margin
-        usable_height = self.config.window_height - 2 * self.config.top_margin
+        usable_w = self.config.window_width - 2 * self.config.lateral_margin
+        usable_h = (self.config.window_height
+                    - 2 * self.config.top_margin
+                    - self.hist_height)
+        max_nodes = max(self.level_counts)
+        node_w = usable_w // max(max_nodes, 1)
+        level_h = usable_h // max(self.max_depth+1, 1)
+        node_h = min(int(level_h * 0.6), node_w)
 
-        max_nodes_at_any_level= max(self.level_counts)
-        max_leaf_nodes = self.level_counts[self.max_depth]
+        level_widths = [
+            int(node_w * (1 + (self.max_depth - lvl) * 0.15))
+            for lvl in range(self.max_depth+1)
+        ]
 
-        node_width = usable_width // max(max_nodes_at_any_level, 1)
-        level_height = usable_height // max(self.max_depth + 1, 1)
-        node_height = min(level_height * 0.6, node_width)
-
-        level_widths = [int(node_width * (1 + (self.max_depth - level) * 0.15))
-                        for level in range(self.max_depth + 1)]
-        
         x_positions = []
-        for level, count in enumerate(self.level_counts):
-            if count == 0:
-                x_positions.append([])
-                continue
-            if count == 1:
-                x_positions.append([self.config.window_width // 2])
+        for lvl, count in enumerate(self.level_counts):
+            if count <= 1:
+                x_positions.append([self.config.window_width//2] if count==1 else [])
             else:
-                spacing = usable_width / (count + 1)
-                level_positions = [
-                    int(self.config.lateral_margin + (i + 1) * spacing)
+                spacing = usable_w / (count+1)
+                x_positions.append([
+                    int(self.config.lateral_margin + (i+1)*spacing)
                     for i in range(count)
-                ]
-                x_positions.append(level_positions)
+                ])
 
+        return NodeLayout(width=int(node_w*0.8),
+                          height=node_h,
+                          x_positions=x_positions,
+                          level_widths=level_widths)
 
-        return NodeLayout(
-            width=int(node_width * 0.8),
-            height=int(node_height),
-            x_positions=x_positions,
-            level_widths=level_widths
-        )
-    
-    def _collect_nodes_bfs(self, root: Any) -> List[Tuple[Any, int, int]]:
-        queue = [(root, 0, 0)]
+    def _collect_nodes_bfs(self, root: Any) -> List[Tuple[Any,int,int]]:
+        queue = [(root,0,0)]
         out = []
         while queue:
-            node, depth, idx = queue.pop(0)
-            if node is None:
-                continue
-            if depth <= self.max_depth:
-                out.append((node, depth, idx))
-    
+            node, d, idx = queue.pop(0)
+            if node is None: continue
+            if d <= self.max_depth:
+                out.append((node,d,idx))
             if isinstance(node, InnerNode):
-                queue.append((node.left, depth + 1, idx * 2))
-                queue.append((node.right, depth + 1, idx * 2 + 1))
+                queue.append((node.left,  d+1, idx*2))
+                queue.append((node.right, d+1, idx*2+1))
         return out
 
-    def _batch_decode_and_resize(self, nodes_list: List[Tuple[Any, int, int]]) -> None:
-        inner_nodes = [
-            (node, depth, idx) 
-            for node, depth, idx in nodes_list 
-            if isinstance(node, InnerNode)
-            ]
-        
-        if not inner_nodes:
-            return
-        
-        node_size = max(self.layout.width, self.layout.height)
-        img_size = min(node_size, max(16, min(256, self.config.img_size)))
-        
-        wx_list = [
-            node.fc.weight.detach().cpu().numpy().flatten() \
-                * node.beta.detach().cpu().item() \
-                * self.embed
-                for node, _, _ in inner_nodes
-            ]
-        
-        wx_array = np.array(wx_list, dtype=np.float32)
-        wx_state = State(wx_array, device=self.world_model.device)
+    def _batch_decode_and_resize(self, nodes_list):
+        inner = [(n,d,i) for n,d,i in nodes_list if isinstance(n,InnerNode)]
+        if not inner: return
+        img_sz = min(self.layout.width, self.layout.height)
 
-        decoded_obs = self.world_model.decode(wx_state)
+        wxs = []
+        nodes = []
 
-        for (node, _, _), img in zip(inner_nodes, decoded_obs.for_render):
-            self.decoded_cache[node] = self.resize_image(image=img, width=img_size, height=img_size)
+        p_left = 0.95
+        p_right = 1.0 - p_left
+        logit_left   = np.log(p_left / p_right)
+        logit_right  = np.log(p_right / p_left)
 
+        for node,_,_ in inner:
+            beta   = float(node.beta.detach().cpu().item())
+            w_arr  = beta * node.fc.weight.detach().cpu().numpy().flatten()
+            b_val  = beta * float(node.fc.bias.detach().cpu().item())
+            w_norm2 = np.dot(w_arr, w_arr) + 1e-12
 
-    def _draw_all_edges(self, nodes_list: List[Tuple[Any, int, int]]) -> None:
-        cumulative_probs = {}
-        cumulative_probs[self.tree.root] = 1.0
+            # compute step so that w^T (step w_unit) + b = logit_*
+            alpha_left  = (logit_left - b_val) / w_norm2
+            alpha_right = (logit_right - b_val) / w_norm2
+
+            sep = self.config.separation_factor
+            alpha_left  *= sep
+            alpha_right *= sep
+
+            v_left = alpha_left * w_arr
+            v_right = alpha_right * w_arr
+
+            if hasattr(self.tree, "x_mean") and hasattr(self.tree, "x_std"):
+                mean = self.tree.x_mean.detach().cpu().numpy()
+                std  = self.tree.x_std.detach().cpu().numpy()
+                
+                v_left  = v_left  * std + mean
+                v_right = v_right * std + mean
+
+            wxs.append(v_left)
+            wxs.append(v_right)
+            nodes.append(node)
+
+        wx_tensor = torch.tensor(np.stack(wxs), dtype=torch.float32, device=self.world_model.device)
+        decoded = self.world_model.decode(State(wx_tensor.cpu().numpy(),device=self.world_model.device))
+        
+        for idx, node in enumerate(nodes):
+            img_L = decoded.for_render[2*idx]
+            img_R = decoded.for_render[2*idx + 1]
+
+            small_sz = 60
+            height_sz = int(small_sz*4/3)
+            small_L = cv2.resize(img_L,  (small_sz, height_sz), interpolation=cv2.INTER_AREA)
+            small_R = cv2.resize(img_R,  (small_sz, height_sz), interpolation=cv2.INTER_AREA)
+
+            border_color = (0, 0, 0)
+            border_width = 2
+            border = np.full((height_sz, border_width, 3), border_color, dtype=np.uint8)
+
+            # composite left|right
+            composite = np.hstack([small_L, border, small_R])
+            self.decoded_cache[node] = composite
+
+    def _draw_all_edges(self, nodes_list):
+        cum = {self.tree.root:1.0}
         leaf_probs = {}
+        for node,d,idx in nodes_list:
+            if isinstance(node,InnerNode):
+                x0,y0 = self._get_node_position(d,idx)
+                x1,y1 = self._get_node_position(d+1,idx*2)
+                x2,y2 = self._get_node_position(d+1,idx*2+1)
+                emb = torch.tensor(self.embed,dtype=torch.float32,
+                                   device=next(node.fc.parameters()).device).unsqueeze(0)
+                pL = float(node.forward(emb).item()); pR = 1-pL
+                parent_p = cum[node]
+                cum[node.left]  = parent_p * pL
+                cum[node.right] = parent_p * pR
+                self._draw_edge(x0,y0,x1,y1,pL)
+                self._draw_edge(x0,y0,x2,y2,pR)
+            elif isinstance(node,LeafNode):
+                leaf_probs[node] = cum.get(node,0.0)
+        self.most_probable_leaf = max(leaf_probs, key=leaf_probs.get) if leaf_probs else None
+        self.leaf_probs = leaf_probs
 
-        for node, depth, idx in nodes_list:
-            if isinstance(node, InnerNode):
-                x, y = self._get_node_position(depth, idx)
-                lx, ly = self._get_node_position(depth + 1, idx * 2)
-                rx, ry = self._get_node_position(depth + 1, idx * 2 + 1)
-                
-                device = next(node.fc.parameters()).device
-                embed_tensor = torch.tensor(self.embed, dtype=torch.float32, device=device).unsqueeze(0)
-                prob_right = node.forward(embed_tensor).item()
-                prob_left = 1 - prob_right
+    def _draw_leaf_prob_histogram(self):
+        if not self.leaf_probs or not self.tree: return
+        nodes = self._collect_nodes_bfs(self.tree.root)
+        leaves = [(idx,self.leaf_probs.get(n,0.0))
+                  for n,depth,idx in nodes
+                  if isinstance(n,LeafNode) and depth==self.max_depth]
+        leaves.sort(key=lambda x:x[0])
+        if not leaves: return
+        xs = self.layout.x_positions[self.max_depth]
+        if not xs: return
 
-                parent_prob = cumulative_probs.get(node, 1.0)
-                cumulative_probs[node.left] = parent_prob * prob_left
-                cumulative_probs[node.right] = parent_prob * prob_right
-                
-                self._draw_edge(x, y, lx, ly, prob_left)
-                self._draw_edge(x, y, rx, ry, prob_right)
-            elif isinstance(node, LeafNode):
-                leaf_probs[node] = cumulative_probs.get(node, 0.0)
-            
-            if leaf_probs:
-                self.most_probable_leaf = max(leaf_probs, key=leaf_probs.get)
-            else:
-                self.most_probable_leaf = None
+        bottom = self.config.window_height - 5
+        top_bg = bottom - self.hist_height + 5
+        cv2.rectangle(
+            self.canvas, 
+            (0,top_bg),
+            (self.config.window_width, bottom),
+            self.config.bgc, -1
+            )
+        bar_w = int(((xs[1]-xs[0]) if len(xs)>1 else self.layout.width)*0.6)
 
+        for (idx,prob),x in zip(leaves,xs):
+            h = int(prob*self.hist_height)
+            y0 = bottom - h
+            x0, x1 = x-bar_w//2, x+bar_w//2
+            cv2.rectangle(
+                self.canvas, (x0,y0),
+                (x1,bottom), self.config.blue,
+                -1
+                )
+            cv2.putText(self.canvas, f"{prob:.2f}",
+                        (x0,y0-4),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        self.config.font_scale*0.8,
+                        (0,0,0),
+                        self.config.font_thickness)
 
-    def _draw_inner_node(self, node: Any, depth: int, idx: int) -> None:
-        x, y = self._get_node_position(depth, idx)
-        if isinstance(node, LeafNode):
-            self._draw_leaf(node, x, y, self.layout.width, self.layout.height)
-        else:
-            if node in self.decoded_cache:
-                img = self.decoded_cache[node]
-            else:
-                img = self._build_embed_image(node, x, y)
-
-            img_h, img_w = img.shape[:2]
-            canvas_h, canvas_w = self.canvas.shape[:2]
-
-            top = max(0, min(canvas_h - img_h, y - img_h // 2))
-            left = max(0, min(canvas_w - img_w, x - img_w // 2))
-            bottom = min(canvas_h, top + img_h)
-            right = min(canvas_w, left + img_w)
-
-            if bottom - top != img_h or right - left != img_w:
-                img = img[:bottom-top, :right-left]
-
-            try:
-                self.canvas[top:bottom, left:right] = img
-            except ValueError as e:
-                self.logger.warning(f"Error drawing node at ({x}, {y}): {e}")
-
-
-    def _resize_image(self, img: np.ndarray, width: int, height: int) -> np.ndarray:
-        return cv2.resize(img, (width, height), interpolation=cv2.INTER_AREA)
-
-    def _get_node_position(self, depth: int, node_index: int) -> Tuple[int, int]:
+    def _get_node_position(self, depth: int, idx: int) -> Tuple[int, int]:
+        """
+        Return (x,y) for a node at given depth/idx, pushing all nodes
+        above the reserved histogram strip at the bottom.
+        """
+        # clamp depth
         if depth >= len(self.layout.x_positions):
-            self.logger.warning(f"Depth {depth} out of range, clamping.")
             depth = len(self.layout.x_positions) - 1
 
-        if not self.layout.x_positions[depth]:
-            self.logger.warning(f"No x_positions at depth={depth}. Returning center screen.")
-            return (self.config.window_width // 2, self.config.window_height // 2)
+        xs = self.layout.x_positions[depth]
+        if not xs:
+            # fallback to center
+            return (self.config.window_width // 2,
+                    self.config.window_height // 2 - self.hist_height // 2)
 
-        if node_index >= len(self.layout.x_positions[depth]):
-            self.logger.warning(f"Index {node_index} out of range at depth {depth}, clamping.")
-            node_index = len(self.layout.x_positions[depth]) - 1
+        # clamp index
+        if idx >= len(xs):
+            idx = len(xs) - 1
+        x = xs[idx]
 
-        x = self.layout.x_positions[depth][node_index]
+        # compute vertical spacing within the content area (excluding histogram)
+        content_h = (self.config.window_height
+                     - 2 * self.config.top_margin
+                     - self.hist_height)
+        level_h = content_h / max(self.max_depth + 1, 1)
+        y = int(self.config.top_margin + depth * level_h + level_h / 2)
 
-        usable_height = self.config.window_height - 2 * self.config.top_margin
-        level_height = usable_height / (self.max_depth + 1)
-        y = int(self.config.top_margin + depth * level_height + (level_height / 2))
         return (x, y)
 
+    def _build_embed_image(self, node: InnerNode, cx:int, cy:int) -> np.ndarray:
+        """Fallback image when no world_model decode is available."""
+        w, h = self.layout.width, self.layout.height
+        img = np.full((h,w,3), self.config.bgc, dtype=np.uint8)
+        cv2.rectangle(img,(0,0),(w-1,h-1),(0,0,0),1)
+        return img
 
-    def _draw_input(
-            self,
-            embed: np.ndarray,
-            x_left: int,
-            y_top: int,
-            ) -> None:
-        """
-        Draws a preview of the embedding, from white->red like leaf bars.
-        """
-        label = "Input Embedding"
-        cv2.putText(
-            self.canvas,
-            label,
-            (x_left, y_top - 8),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            self.config.font_scale,
-            (0, 0, 0),
-            self.config.font_thickness
-        )
-        embed = embed[0]
-        box_size = max(50, min(self.config.window_width, self.config.window_height) // 6)
-
-        length = len(embed)
-        side = int(math.sqrt(length))
-        if side * side != length:
-            side = length
-
-        cell_size = max(1, box_size // max(side, 1))
-        max_val = np.max(np.abs(embed)) + 1e-8
-
-        for i in range(length):
-            val = embed[i]
-            alpha = min(1.0, max(0.0, abs(val) / max_val))
-            blue = np.array(self.config.blue, dtype=np.float32)
-            color = self.blend(np.array(alpha), blue)
-
-            r, c = divmod(i, side)
-            sx = x_left + c * cell_size
-            sy = y_top + r * cell_size
-
-            cv2.rectangle(
-                self.canvas,
-                (sx, sy),
-                (sx + cell_size, sy + cell_size),
-                tuple(int(k) for k in color),
-                -1
-            )
-
-        w_box = side * cell_size
-        h_box = side * cell_size
-        cv2.rectangle(
-            self.canvas,
-            (x_left - 1, y_top - 1),
-            (x_left + w_box + 1, y_top + h_box + 1),
-            (0, 0, 0),
-            1
-        )
-
-    def _draw_legend(self,
-                     x_left: int,
-                     y_top: int) -> None:
-        """
-        Draws two bars: 
-         1) Hue: red->blue
-         2) Magnitude: white->red
-        With short labels above each bar.
-        """
-        legend_label = "Legend"
-        cv2.putText(self.canvas,
-                    legend_label,
-                    (x_left, y_top - 10),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    self.config.font_scale,
-                    (0, 0, 0),
-                    self.config.font_thickness)
-
-        bar_w = max(60, self.config.window_width // 15)
-        bar_h = max(6, self.config.window_height // 100)
-        gap = bar_h * 2
-
-        # Hue label
-        hue_label = "Hue: red(-), blue(+)"
-        hue_label_x = x_left
-        hue_label_y = y_top + bar_h
-        cv2.putText(
-            self.canvas,
-            hue_label,
-            (hue_label_x, hue_label_y),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            self.config.font_scale * 0.8,
-            (0, 0, 0),
-            self.config.font_thickness
-        )
-
-        # Hue bar below label
-        hue_bar_top = hue_label_y + 8
-        steps = 30
-        for i in range(steps):
-            frac = i / (steps - 1)
-            # Red=(0,0,255), Blue=(255,0,0)
-            red = np.array(self.config.red, dtype=np.float32)
-            blue = np.array(self.config.blue, dtype=np.float32)
-            color = self.blend(frac, blue, red)
-
-            xx1 = x_left + i * (bar_w // steps)
-            yy1 = hue_bar_top
-            xx2 = xx1 + (bar_w // steps)
-            yy2 = yy1 + bar_h
-
-            cv2.rectangle(
-                self.canvas,
-                (xx1, yy1),
-                (xx2, yy2),
-                tuple(int(k) for k in color),
-                -1
-            )
-
-        # Next label for magnitude
-        mag_label = "Magnitude : 0->1"
-        mag_label_x = x_left
-        mag_label_y = hue_bar_top + bar_h + gap
-        cv2.putText(
-            self.canvas,
-            mag_label,
-            (mag_label_x, mag_label_y),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            self.config.font_scale * 0.8,
-            (0, 0, 0),
-            self.config.font_thickness
-        )
-
-        # Magnitude bar
-        mag_bar_top = mag_label_y + 8
-        steps2 = 30
-        for i in range(steps2):
-            frac = i / (steps2 - 1)
-            blue = np.array(self.config.blue, dtype=np.float32)
-            color = self.blend(frac, blue)
-
-            xx1 = x_left + i * (bar_w // steps2)
-            yy1 = mag_bar_top
-            xx2 = xx1 + (bar_w // steps2)
-            yy2 = yy1 + bar_h
-
-            cv2.rectangle(
-                self.canvas,
-                (xx1, yy1),
-                (xx2, yy2),
-                tuple(int(k) for k in color),
-                -1
-            )
-
-    def _draw_edge(self,
-                   x1: int,
-                   y1: int,
-                   x2: int,
-                   y2: int,
-                   prob: float) -> None:
-        """Draw blue edge with thickness reflecting probability values."""
-
-        color = self.config.blue # aways blue
-        thickness = max(1, min(5, int(1 + prob * 3)))
-        cv2.line(self.canvas, (x1, y1), (x2, y2), color, thickness)
-
-        txt = f"{prob:.2f}"[1:]
-        mx = (x1 + x2) // 2
-        my = (y1 + y2) // 2 - 10
-        (tw, th), _ = cv2.getTextSize(txt,
-                                      cv2.FONT_HERSHEY_SIMPLEX,
-                                      self.config.font_scale,
-                                      self.config.font_thickness)
-        pad = 2
-        bg1 = (mx - tw // 2 - pad, my - th - pad)
-        bg2 = (mx + tw // 2 + pad, my + pad)
-        cv2.rectangle(self.canvas, bg1, bg2, (255, 255, 255), -1)
-        cv2.putText(self.canvas, txt,
-                    (mx - tw // 2, my),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    self.config.font_scale,
-                    (0, 0, 0),
-                    self.config.font_thickness)
-
-    def _draw_nodes(self,
-                    node: Any,
-                    embed: np.ndarray,
-                    depth: int,
-                    node_index: int) -> None:
-        if node is None:
-            return
-
-        x, y = self._get_node_position(depth, node_index)
-
-        if isinstance(node, LeafNode):
-            self._draw_leaf(node, x, y,
-                            self.layout.width,
-                            self.layout.height)
+    def _draw_inner_node(self, node: Any, depth:int, idx:int) -> None:
+        x,y = self._get_node_position(depth,idx)
+        if isinstance(node,LeafNode):
+            self._draw_leaf(node,x,y,self.layout.width,self.layout.height)
         else:
-            size = self.layout.level_widths[depth]
-            self._draw_inner_node(node, embed, x, y, size)
-            self._draw_nodes(node.left, embed, depth + 1, node_index * 2)
-            self._draw_nodes(node.right, embed, depth + 1, node_index * 2 + 1)
+            img = self.decoded_cache.get(node,
+                                        self._build_embed_image(node,x,y))
+            h,w = img.shape[:2]
+            ch,cw = self.canvas.shape[:2]
+            top  = max(0, min(ch-h, y-h//2))
+            left = max(0, min(cw-w, x-w//2))
+            self.canvas[top:top+h,left:left+w] = img
 
+    def _draw_edge(self, x1:int,y1:int,x2:int,y2:int,prob:float) -> None:
+        thickness = max(1, min(5,int(1 + prob*3)))
+        cv2.line(self.canvas,(x1,y1),(x2,y2),self.config.blue,thickness)
+        mx,my = (x1+x2)//2, (y1+y2)//2 - 10
+        txt = f"{prob:.2f}"[1:]
+        (tw,th),_ = cv2.getTextSize(txt,cv2.FONT_HERSHEY_SIMPLEX,
+                                    self.config.font_scale,
+                                    self.config.font_thickness)
+        cv2.rectangle(self.canvas,
+                      (mx-tw//2-2,my-th-2),
+                      (mx+tw//2+2,my+2),
+                      (255,255,255),-1)
+        cv2.putText(self.canvas,txt,
+                    (mx-tw//2,my),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    self.config.font_scale,
+                    (0,0,0),
+                    self.config.font_thickness)
 
-    def _gather_wx(self, root: InnerNode, embed: np.ndarray) -> Dict[str, np.ndarray]:
-        device = next(root.fc.parameters()).device
-        wx_map = {}
+    def _draw_input(self, embed: np.ndarray, x_left:int, y_top:int) -> None:
+        label = "Input Embedding"
+        cv2.putText(self.canvas,label,(x_left,y_top-8),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    self.config.font_scale,(0,0,0),self.config.font_thickness)
+        arr = embed[0]
+        box = max(50,min(self.config.window_width,self.config.window_height)//6)
+        L = len(arr)
+        side = int(math.sqrt(L))
+        if side*side!=L: side=L
+        cell = max(1,box//max(side,1))
+        maxv = np.max(np.abs(arr))+1e-8
+        for i,val in enumerate(arr):
+            alpha = min(1.0,max(0.0,abs(val)/maxv))
+            color = self.blend(alpha,np.array(self.config.blue,dtype=np.float32))
+            r,c = divmod(i,side)
+            sx,sy = x_left+c*cell, y_top+r*cell
+            cv2.rectangle(self.canvas,(sx,sy),(sx+cell,sy+cell),
+                          tuple(int(k) for k in color),-1)
+        w_box, h_box = side*cell, side*cell
+        cv2.rectangle(self.canvas,
+                      (x_left-1,y_top-1),
+                      (x_left+w_box+1,y_top+h_box+1),
+                      (0,0,0),1)
 
-        def recurse(node: Any) -> None:
-            if node is None or isinstance(node, LeafNode):
-                return
+    def _draw_legend(self, x_left:int, y_top:int) -> None:
+        cv2.putText(self.canvas,"Legend",(x_left,y_top-10),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    self.config.font_scale,(0,0,0),self.config.font_thickness)
+        bar_w = max(60,self.config.window_width//15)
+        bar_h = max(6,self.config.window_height//100)
+        gap = bar_h*2
+        # Hue
+        cv2.putText(self.canvas,"Hue: red(-), blue(+)",
+                    (x_left,y_top+bar_h),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    self.config.font_scale*0.8,(0,0,0),self.config.font_thickness)
+        top_h = y_top+bar_h+8
+        for i in range(30):
+            frac = i/29
+            color = self.blend(frac,
+                               np.array(self.config.blue,dtype=np.float32),
+                               np.array(self.config.red, dtype=np.float32))
+            xx1 = x_left + i*(bar_w//30)
+            cv2.rectangle(self.canvas,(xx1,top_h),
+                          (xx1+bar_w//30,top_h+bar_h),
+                          tuple(int(k) for k in color),-1)
+        # Magnitude
+        mag_y = top_h+bar_h+gap
+        cv2.putText(self.canvas,"Magnitude : 0->1",
+                    (x_left,mag_y),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    self.config.font_scale*0.8,(0,0,0),self.config.font_thickness)
+        top_m = mag_y+8
+        for i in range(30):
+            frac = i/29
+            color = self.blend(frac,np.array(self.config.blue,dtype=np.float32))
+            xx1 = x_left + i*(bar_w//30)
+            cv2.rectangle(self.canvas,(xx1,top_m),
+                          (xx1+bar_w//30,top_m+bar_h),
+                          tuple(int(k) for k in color),-1)
 
-            if isinstance(node, InnerNode):
-                w_raw = node.fc.weight.detach().cpu().numpy().flatten()
-                beta_val = node.beta.detach().cpu().item()
-                weights = w_raw * beta_val
-                wx_values = weights * embed
-                wx_map[node] = wx_values
-                recurse(node.left)
-                recurse(node.right)
-
-        recurse(root)
-        return wx_map
-
-    def _draw_leaf(
-            self,
-            node: LeafNode,
-            cx: int,
-            cy: int,
-            width: int,
-            height: int
-        ) -> None:
-        """Visualizes the leaf node with labeled action probabilities."""
-
-        action_probs = torch.softmax(node.param, dim=0).detach().cpu().numpy()
-        label_names = ["forward", "left", "right"]
-        n_actions = len(action_probs)
-
-        w_box = width
-        h_box = max(1, height // n_actions)
-        tl_x = cx - w_box // 2
-        tl_y = cy - (h_box * n_actions // 2)
-
+    def _draw_leaf(self, node:LeafNode, cx:int, cy:int, w:int, h:int) -> None:
+        probs = torch.softmax(node.param,dim=0).cpu().numpy()
+        names = ["forward","left","right"]
+        n = len(probs)
+        h_box = max(1,h//n)
+        tlx = cx - w//2
+        tly = cy - (h_box*n//2)
         cmap = cv2.COLORMAP_VIRIDIS
-        max_prob = max(action_probs)
-
-        for i, prob in enumerate(action_probs):
-            alpha = float(prob)
-            norm_alpha = int((alpha / max_prob) * 255) # [0..255] colormap
-            blue = np.array(self.config.blue, dtype=np.float32)
-            color_map = cv2.applyColorMap(np.array([[norm_alpha]], dtype=np.uint8), cmap)
-            color = tuple(int(x) for x in color_map[0][0])
-
-            y1 = tl_y + i * h_box
-            cv2.rectangle(
-                self.canvas, (tl_x, y1), 
-                (tl_x + w_box, y1 + h_box),
-                tuple(int(k) for k in color), -1
-            )
-            cv2.rectangle(
-                self.canvas, (tl_x, y1), 
-                (tl_x + w_box, y1 + h_box),
-                (0, 0, 0), 1
-            )
-
+        m = max(probs)
+        for i,p in enumerate(probs):
+            alpha = int((p/m)*255)
+            cmap_col = cv2.applyColorMap(np.array([[alpha]],dtype=np.uint8),cmap)[0][0]
+            y1 = tly + i*h_box
+            cv2.rectangle(self.canvas,(tlx,y1),(tlx+w,y1+h_box),
+                          tuple(int(c) for c in cmap_col),-1)
+            cv2.rectangle(self.canvas,(tlx,y1),(tlx+w,y1+h_box),(0,0,0),1)
             if self.config.show_prob_text:
-                prob_text = f"{alpha:.2f}"
-                text_x = tl_x + w_box // 2 - 10
-                text_y = y1 + h_box // 2 + 5
-                cv2.putText(
-                    self.canvas, prob_text, (text_x, text_y),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA
-                )
-
+                txt = f"{p:.2f}"
+                tx = tlx + w//2 - 10
+                ty = y1 + h_box//2 + 5
+                cv2.putText(self.canvas,txt,(tx,ty),
+                            cv2.FONT_HERSHEY_SIMPLEX,0.5,(255,255,255),1)
             if self.config.show_label and not self.labeled:
-                label_x = tl_x - 60
-                label_y = y1 + h_box // 2 + 5
-                cv2.putText(
-                    self.canvas, label_names[i], (label_x, label_y),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 1, cv2.LINE_AA
-                )
-
+                lx = tlx - 60
+                ly = y1 + h_box//2 +5
+                cv2.putText(self.canvas,names[i],(lx,ly),
+                            cv2.FONT_HERSHEY_SIMPLEX,0.4,(0,0,0),1)
         self.labeled = True
-
-        if self.most_probable_leaf == node:
-            # border for most probable leaf
-            cv2.rectangle(
-                self.canvas, (tl_x - 2, tl_y - 2),
-                (tl_x + w_box + 2, tl_y + h_box * n_actions + 2),
-                (0, 0, 0), 3
-                )
-        
+        if node is self.most_probable_leaf:
+            cv2.rectangle(self.canvas,
+                          (tlx-2,tly-2),
+                          (tlx+w+2,tly+h_box*n+2),
+                          (0,0,0),3)
 
     def _draw_metric(self) -> None:
-        """
-        Draws a larger box displaying the argmax accuracy in the top-right corner
-        of the canvas, using a bigger font and dimensions for better readability.
-        """
-        import cv2
-
-        margin = 20
-        box_width = 200
-        box_height = 32
-        font_scale = 0.65
-        font_thickness = 2
-
-        x = self.config.window_width - box_width - margin
-        y = margin
-
-        cv2.rectangle(self.canvas, (x, y), (x + box_width, y + box_height),
-                    (240, 240, 240), thickness=cv2.FILLED)
-
-        cv2.rectangle(self.canvas, (x, y), (x + box_width, y + box_height),
-                    (0, 0, 0), thickness=2)
-
-        text = f"Argmax Acc: {self.metric:.2f}"
-
-        (text_width, text_height), _ = cv2.getTextSize(
-            text,
-            cv2.FONT_HERSHEY_SIMPLEX,
-            font_scale,
-            font_thickness
-        )
-        text_x = x + (box_width - text_width) // 2
-        text_y = y + (box_height + text_height) // 2 - 5
-
-        cv2.putText(
-            self.canvas,
-            text,
-            (text_x, text_y),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            font_scale,
-            (0, 0, 0),
-            font_thickness,
-            cv2.LINE_AA
-        )
-
+        margin = 20; bw=200; bh=32
+        fs=0.65; ft=2
+        x = self.config.window_width - bw - margin; y=margin
+        cv2.rectangle(self.canvas,(x,y),(x+bw,y+bh),(240,240,240),-1)
+        cv2.rectangle(self.canvas,(x,y),(x+bw,y+bh),(0,0,0),2)
+        txt = f"Argmax Acc: {self.tree.metric:.2f}"
+        (tw,th),_ = cv2.getTextSize(txt,cv2.FONT_HERSHEY_SIMPLEX,fs,ft)
+        tx = x + (bw-tw)//2; ty = y + (bh+th)//2 -5
+        cv2.putText(self.canvas,txt,(tx,ty),
+                    cv2.FONT_HERSHEY_SIMPLEX,fs,(0,0,0),ft,cv2.LINE_AA)
 
     def _apply_background_gradient(self) -> None:
-        """Creates a visually appealing gradient background."""
-        rows, cols, _ = self.canvas.shape
-        gradient = np.linspace(100, 230, rows, dtype=np.uint8)[:, np.newaxis]
-        gradient = np.repeat(gradient, cols, axis=1)
-
-        # Convert to a color image (blueish gradient)
-        blue_channel = np.clip(gradient + 25, 0, 255)
-        green_channel = np.clip(gradient - 30, 0, 255)
-        red_channel = np.clip(gradient - 50, 0, 255)
-
-        self.canvas[:] = cv2.merge([blue_channel, green_channel, red_channel])
-
+        rows,cols,_ = self.canvas.shape
+        grad = np.linspace(100,230,rows,dtype=np.uint8)[:,None]
+        grad = np.repeat(grad,cols,axis=1)
+        b = np.clip(grad+25,0,255)
+        g = np.clip(grad-30,0,255)
+        r = np.clip(grad-50,0,255)
+        self.canvas[:] = cv2.merge([b,g,r])
 
 
 if __name__ == "__main__":
     torch.manual_seed(42)
-    config = SoftConfig()
-
-    input_dim = 64
-    output_dim = 3
-    sample_x = torch.randn(1, input_dim)
-
-    tree = SoftDecisionTree(config)
-    tree.setup_network(sample_x, torch.randn(1, output_dim))
-
-    from src.run.config import TreeVisualizerConfig
-    viz_cfg = TreeVisualizerConfig(
+    cfg_tree = TreeVisualizerConfig(
         window_width=1200,
         window_height=900,
         show_embed=True,
         show_legend=True
     )
-
-    visualizer = SoftTreeVisualizer(viz_cfg, tree)
-    visualizer.update(sample_x)
-    visualizer.render()
+    # build a dummy tree
+    cfg_soft = SoftConfig()
+    tree = SoftDecisionTree(cfg_soft)
+    x = torch.randn(1, cfg_soft.latent_dim)
+    y = torch.randn(1, cfg_soft.lmbda.shape[0] if hasattr(cfg_soft,'lmbda') else 3)
+    tree.setup_network(x, torch.randn(1,3))
+    viz = SoftTreeVisualizer(cfg_tree)
+    viz.update(x.cpu().numpy(), tree, None)
+    cv2.imshow("Tree", viz.canvas)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()

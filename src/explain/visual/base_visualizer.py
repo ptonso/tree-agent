@@ -63,6 +63,18 @@ class BaseVisualizer:
         cv2.imshow(self.window_name, self.canvas)
         cv2.waitKey(1)
 
+    def save(self, output_dir: str = "reports") -> None:
+        """
+        Saves the current visualization to a file.
+        The filename is generated based on the current timestamp.
+        """
+        import os
+        import time
+        os.makedirs(output_dir, exist_ok=True)
+        filename = f"{output_dir}/{self.window_name}_{int(time.time())}.png"
+        cv2.imwrite(filename, self.canvas)
+        print(f"Saved visualization to {filename}")
+
     def blend(
             self,
             weight: float,

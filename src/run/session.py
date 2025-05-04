@@ -76,6 +76,11 @@ class Session:
                     )
                     self.visualizer.render()
 
+                    savepath = self.config.session.vis_prints_path
+                    if episode_id > self.config.session.dtree_warmup_episodes \
+                        and savepath is not None:
+                        self.visualizer.save(savepath)
+
             trajectory.append(
                 state            = state.state_data,
                 action           = action.sampled_action,
@@ -105,6 +110,10 @@ class Session:
 
         for episode in range(self.config.session.n_episodes):
             episode_reward, trajectory = self.run_episode(episode)
+
+            import cv2
+            cv2.waitKey(1)
+
             total_rewards.append(episode_reward)
             self.online_trajectories.append(trajectory)
 
@@ -119,13 +128,13 @@ class Session:
                 wm_metrics[episode] = wm_train_metrics
 
             if len(self.replay_trajectories) >= self.config.session.replay_buffer:
-
+                agent_train_metrics = {}
+                dtree_train_metrics = {}
                 if episode >= self.config.session.vae_warmup_episodes:
                     agent_train_metrics = self.agent.train_step(self.replay_trajectories)
-                    dtree_train_metrics = self.dtree.train_step(self.replay_trajectories)
-                else:
-                    agent_train_metrics = {}
-                    dtree_train_metrics = {}
+                    
+                    if episode >= self.config.session.dtree_warmup_episodes:
+                        dtree_train_metrics = self.dtree.train_step(self.replay_trajectories)    
 
                 agent_metrics[episode] = agent_train_metrics
                 dtree_metrics[episode] = dtree_train_metrics

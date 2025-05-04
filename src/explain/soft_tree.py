@@ -1,3 +1,4 @@
+
 import logging
 import torch
 import torch.nn as nn
@@ -42,8 +43,8 @@ class InnerNode:
     def cal_prob(self, x: torch.Tensor, path_prob: torch.Tensor) -> List[Tuple[torch.Tensor, torch.Tensor]]:
         """Recursively compute the probability of reaching each leaf node."""
         prob = self.forward(x)
-        left_accumulator = self.left.cal_prob(x, path_prob * (1 - prob))
-        right_accumulator = self.right.cal_prob(x, path_prob * prob)
+        left_accumulator  = self.left.cal_prob (x, path_prob * prob)
+        right_accumulator = self.right.cal_prob(x, path_prob * (1 - prob))
         return left_accumulator + right_accumulator
 
 
@@ -76,7 +77,7 @@ class SoftDecisionTree(nn.Module):
         self.logger = logger
         self.max_depth = config.depth
         self.lr = config.lr
-        self.momentum = config.momentum
+        # self.momentum = config.momentum
         self.lmbda = config.lmbda
         self.num_epochs = config.num_epochs
         self.batch_size = config.batch_size
@@ -99,7 +100,13 @@ class SoftDecisionTree(nn.Module):
 
         self.root = InnerNode(0, self.input_dim, self.output_dim, self.max_depth, self.lmbda, self.device)
         self.collect_parameters()
-        self.optimizer = optim.SGD(self.parameters(), lr=self.lr, momentum=self.momentum)
+
+        self.optimizer = optim.Adam(
+            self.parameters(),
+            lr=self.lr,
+            betas=(0.9, 0.999)
+        )
+        # self.optimizer = optim.SGD(self.parameters(), lr=self.lr, momentum=self.momentum)
         self.to(self.device)
 
 
@@ -110,7 +117,6 @@ class SoftDecisionTree(nn.Module):
         if keep_tree, simply proceed to train existing tree with gradient.
 
         """
-        
         batch = Batch(trajectories, self.device)
         batch_data = batch.prepare_tensors()
         X = batch_data.states
@@ -121,8 +127,12 @@ class SoftDecisionTree(nn.Module):
         self.setup_network(X, y)
         self._initialize_leaf_nodes(y)
 
-        # if not keep_tree:
-        #     self._reinitialize_tree(X, y)
+        mu = X.mean(dim=0)
+        std = X.std(dim=0) + 1e-6
+
+        self.register_buffer('x_mean', mu)
+        self.register_buffer('x_std', std)
+
         metrics = self._train_step(X, y)
         self.log_metrics(metrics)
         self.metric = metrics["argmax_acc_loss"]
@@ -176,7 +186,7 @@ class SoftDecisionTree(nn.Module):
                 sample_probs = torch.distributions.Dirichlet(
                     base_probs * self.config.concentration).sample()
                 
-                sharpened = sample_probs ** self.config.sharpen
+                sharpened = sample_probs ** self.config.leaf_sharpen
                 sample_probs = sharpened / sharpened.sum()
                 node.param.data.copy_(torch.log(sample_probs))
             else:
@@ -197,12 +207,19 @@ class SoftDecisionTree(nn.Module):
 
         best_total_loss, best_kl_loss, best_mse_loss, best_argmax_acc_loss = float('inf'), float('inf'), float('inf'), float('inf')
 
-        for _ in range(self.num_epochs):
+        patience_ctr = 0
+        for epoch in range(self.num_epochs):
             train_kl = self._train_epoch(X_train, y_train)
             val_total, val_kl, val_mse, val_acc = self._evaluate(X_val, y_val)
 
             if val_total < best_total_loss:
                 best_total_loss, best_kl_loss, best_mse_loss, best_argmax_acc_loss = val_total, val_kl, val_mse, val_acc
+                patience_ctr = 0
+            else:
+                patience_ctr += 1
+                if patience_ctr >= self.config.patience:
+                    break
+
 
         return {
             "actual_loss": best_total_loss, 
@@ -224,6 +241,7 @@ class SoftDecisionTree(nn.Module):
             self.optimizer.zero_grad()
             total_loss, _, _, _ = self.cal_loss(batch_X, batch_y)
             total_loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=5.0)
             self.optimizer.step()
 
             total += total_loss.item()
@@ -248,40 +266,83 @@ class SoftDecisionTree(nn.Module):
         return total / k, total_kl / k, total_mse / k, total_acc / k
     
 
-    def cal_loss(self, X: torch.Tensor, y: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, float]:
+    def cal_loss(self, X: torch.Tensor, y: torch.Tensor) -> Tuple[torch.Tensor, ...]:
         """Compute KL and MSE loss between predicted and target distributions, and argmax accuracy."""
-        batch_size = y.size(0)
-        leaf_accumulator = self.root.cal_prob(X, torch.ones(batch_size, 1, device=self.device))
+        B = y.size(0)
 
-        kl_loss, mse_loss = 0., 0.
-        correct, total_weight = 0, 0
+        if hasattr(self, 'x_mean') and hasattr(self, 'x_std'):
+            X = (X - self.x_mean) / self.x_std
 
-        num_classes = y.size(1)
+        pred = torch.zeros_like(y)
+        leaf_acc = self.root.cal_prob(
+            X,
+            torch.ones(B, 1, device=self.device)
+        )
 
-        for path_prob, Q in leaf_accumulator:
-            
-            # KL divergence between predicted and true label
-            kl_div = F.kl_div(Q.log(), y, reduction='batchmean')
-            
-            # MSE loss
-            mse = F.mse_loss(Q, y)
-
-            kl_loss += (path_prob * kl_div).sum()
-            mse_loss += (path_prob * mse).sum()
-
-            pred_class = Q.argmax(dim=1)
-            true_class = y.argmax(dim=1)
-            
-            weight = path_prob.squeeze() 
-            correct += (weight * (pred_class == true_class).float()).sum().item()
-            total_weight += weight.sum()
-
-        ratio = float(correct / total_weight) if total_weight > 0 else 0.0
-        argmax_accuracy = torch.tensor(ratio, device=self.device)
-
-        total_loss = kl_loss
+        for path_prob, Q in leaf_acc:
+            pred += path_prob * Q
         
-        return total_loss / batch_size, kl_loss / batch_size, mse_loss / batch_size, argmax_accuracy
+        pred = pred / (pred.sum(dim=1, keepdim=True) + 1e-8)
+
+        T = self.config.temp_teacher
+        if T != 1.0:
+            teacher_logits = torch.log(y + 1e-8) / T
+            y_soft         = torch.softmax(teacher_logits, dim=1)
+            kl_scale       = T * T
+        else:
+            y_soft, kl_scale = y, 1.0
+
+        kl_loss   = F.kl_div(torch.log(pred + 1e-8), y_soft, reduction='batchmean') * kl_scale
+        mse_loss  = F.mse_loss(pred, y, reduction='mean')
+        total     = kl_loss + self.config.beta_mse * mse_loss
+
+        argmax_acc = (pred.argmax(dim=1) == y.argmax(dim=1)).float().mean()
+
+        return total, kl_loss, mse_loss, argmax_acc
+
+        # T = self.config.temp_teacher
+        # if T != 1.0:
+        #     eps = 1e-8
+        #     teacher_logits   = torch.log(y + eps)
+        #     teacher_logits_T = teacher_logits / T
+        #     y_sharp = torch.softmax(teacher_logits_T, dim=1)
+        #     kl_scale = T * T
+        # else:
+        #     y_sharp = y
+        #     kl_scale = 1.0
+        
+        # leaf_acc = self.root.cal_prob(
+        #     X,
+        #     torch.ones(batch_size, 1, device=self.device)
+        # )
+    
+        # kl_loss, mse_loss = 0., 0.
+        # correct, total_weight = 0, 0
+
+        # for path_prob, Q in leaf_acc:
+            
+        #     # KL divergence between predicted and true label
+        #     kl_div = F.kl_div(Q.log(), y_sharp, reduction='batchmean') * kl_scale
+            
+        #     # MSE loss
+        #     mse = F.mse_loss(Q, y)
+
+        #     kl_loss += (path_prob * kl_div).sum()
+        #     mse_loss += (path_prob * mse).sum()
+
+        #     pred_class = Q.argmax(dim=1)
+        #     true_class = y.argmax(dim=1)
+            
+        #     weight = path_prob.squeeze() 
+        #     correct += (weight * (pred_class == true_class).float()).sum().item()
+        #     total_weight += weight.sum()
+
+        # ratio = float(correct / total_weight) if total_weight > 0 else 0.0
+        # argmax_accuracy = torch.tensor(ratio, device=self.device)
+
+        # total_loss = kl_loss + self.config.beta_mse * mse_loss
+        
+        # return total_loss / batch_size, kl_loss / batch_size, mse_loss / batch_size, argmax_accuracy
 
 
     def collect_parameters(self):

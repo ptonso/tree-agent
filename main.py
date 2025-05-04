@@ -6,9 +6,9 @@ from src.run.config import Config, SessionConfig, EnvConfig, ExpConfig
 
 
 def main():
-    rendered_main()
+    # rendered_main()
     # single_exp_main()
-    # multi_exp_main()
+    multi_exp_main()
     pass
 
 
@@ -36,15 +36,15 @@ def rendered_main():
 def single_exp_main():
     config = Config(
         exp=ExpConfig(
-            name="dtree-gaussian-rebuild",
+            name="better-dtree",
             n_runs=3
         ),
         session=SessionConfig(
-            n_episodes=500,
+            n_episodes=1000,
             n_steps=1000,
             seed=42,
             render=False,
-            vae_vis=False,
+            vae_vis=True,
         )
     )
     experiment = Experiment(config, base_dir="experiments")
@@ -56,39 +56,32 @@ def single_exp_main():
 def multi_exp_main():
     baseline_config = Config()
     baseline_config.session.render = False
-    baseline_config.session.vae_vis = False
+    baseline_config.session.vae_vis = True
     baseline_config.session.n_episodes = 500
+    baseline_config.session.dtree_warmup_episodes = 500
 
     parametric_changes = [
         {
-            "exp": {"name": "dtree20conc1sharpen"},
-            "soft": {"concentration": 20.0,
-                    "sharpen":1.0}
+            "exp": {"name": "bonus_free"},
+            "agent": {
+                "world_model": {
+                    "saliency_bonus": 0.0,
+                    "blur_kernel": 0
+                }
+            }
         },
         {
-            "exp": {"name": "dtree30concs1harpen"},
-            "soft": {"concentration": 30.0,
-                    "sharpen":1.0}
-        },
-        {
-            "exp": {"name": "dtree10conc1sharpen"},
-            "soft": {"concentration": 20.0,
-                    "sharpen":1.0}
-        },
-        {
-            "exp": {"name": "dtree20conc2sharpen"},
-            "soft": {"concentration": 20.0,
-                    "sharpen":2.0}
-        },
-        {
-            "exp": {"name": "dtree20conc1.5sharpen"},
-            "soft": {"concentration": 20.0,
-                    "sharpen":1.5}
+            "exp": {"name": "saliency_bonus"},
+            "agent": {
+                "world_model": {
+                    "saliency_bonus": 3.0
+                    }
+                }
         },
     ]
 
 
-    base_results_dir = "experiments/dtree-full-rebuild"
+    base_results_dir = "experiments/is-sobel-useful?"
     multi_experiment = MultiExperiment(baseline_config, parametric_changes, base_dir=base_results_dir)
     multi_experiment.run_experiments()
     
