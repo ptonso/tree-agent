@@ -37,11 +37,6 @@ class MultiExperiment:
             self._run_single_experiment(config, self.base_dir)
         input("Press ENTER to close plots")
 
-
-        # num_workers = min(len(self.experiment_configs), self.max_processes)
-        # with multiprocessing.Pool(processes=num_workers) as pool:
-        #     pool.starmap(self._run_single_experiment, self.experiment_configs)
-
     @staticmethod
     def _apply_changes(config: Config, changes: Dict):
         "Apply a possibly nested dictionary of changes to configuration."
@@ -59,12 +54,10 @@ class MultiExperiment:
             experiment = Experiment(config, base_dir=base_dir)
             experiment.run_experiment()    
             experiment.plot_results(savefig=True)
+            experiment.plot_dtree_results(savefig=True)
+            
             print(f"[SUCCESS] Experiment {config.exp.name} run successfully.")
         except torch.cuda.OutOfMemoryError:
             print(f"[OOM] GPU out of memory in experiment: {config.exp.name}. Skipping...")
         finally:
             torch.cuda.empty_cache()
-
-
-# added to venv/bin/activate script: 
-# export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True

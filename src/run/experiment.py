@@ -115,6 +115,9 @@ class Experiment:
         std_metrics = {}
 
         for ep, metrics_list in all_metrics.items():
+            if not metrics_list or metrics_list[0] is None:
+                continue
+
             metric_keys = metrics_list[0].keys()
             metrics_per_key = {key: [m.get(key, 0) for m in metrics_list] for key in metric_keys}
 
@@ -165,6 +168,29 @@ class Experiment:
         plt.show(block=False)
         plt.pause(0.5)
 
+
+    def plot_dtree_results(self, savefig: bool = True) -> None:
+        if "dtree" in self.experiment_data["train_metrics"]:
+            dtree_metrics = self.experiment_data["train_metrics"]["dtree"]["avg"]
+            episodes = sorted(dtree_metrics.keys())
+
+            fig, ax = plt.subplots(figsize=(10,6))
+            ax.set_title("Soft Tree Explainer Losses")
+            for key in ["actual_loss", "kl_loss", "mse_loss", "argmax_acc_loss"]:
+                values = [dtree_metrics[ep].get(key, 0.0) for ep in episodes]
+                ax.plot(episodes, values, label=key)
+            ax.set_xlabel("Episode")
+            ax.set_ylabel("Loss")
+            ax.grid(alpha=0.3)
+            ax.legend()
+            
+            if savefig:
+                loss_fig_path = os.path.join(self.results_dir, f"{self.filename}_dtree_losses.png")
+                plt.savefig(loss_fig_path, dpi=300, bbox_inches='tight')
+            plt.show(block=False)
+            plt.pause(0.5)
+
+    
     @staticmethod
     def dataclass2dict(obj):
         if is_dataclass(obj):

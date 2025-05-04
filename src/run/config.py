@@ -30,10 +30,10 @@ class EnvConfig(BaseConfig):
 
 @dataclass
 class EncoderConfig(BaseConfig):
-    channels: List[int]  = field(default_factory=lambda: [ 32,  64, 128])
-    kernels:  List[int]  = field(default_factory=lambda: [  4,   4,   3])
-    strides:  List[int]  = field(default_factory=lambda: [  2,   2,   1])
-    paddings: List[int]  = field(default_factory=lambda: [  1,   1,   1])
+    channels: List[int]  = field(default_factory=lambda: [ 32,  64, 128, 256])
+    kernels:  List[int]  = field(default_factory=lambda: [  4,   4,   3,   3])
+    strides:  List[int]  = field(default_factory=lambda: [  2,   2,   1,   1])
+    paddings: List[int]  = field(default_factory=lambda: [  1,   1,   1,   2])
     fc_layers:  int      = 2
     fc_units:   int      = 256
     activation: str      = "silu"
@@ -41,10 +41,10 @@ class EncoderConfig(BaseConfig):
 
 @dataclass
 class DecoderConfig(BaseConfig):
-    channels: List[int]  = field(default_factory=lambda: [128,  64, 32])
-    kernels:  List[int]  = field(default_factory=lambda: [  4,   4,  4])
-    strides:  List[int]  = field(default_factory=lambda: [  2,   2,  1])
-    paddings: List[int]  = field(default_factory=lambda: [  1,   1,  1])
+    channels: List[int]  = field(default_factory=lambda: [256, 128,  64, 32])
+    kernels:  List[int]  = field(default_factory=lambda: [  4,   4,   4,  4])
+    strides:  List[int]  = field(default_factory=lambda: [  2,   2,   2,  1])
+    paddings: List[int]  = field(default_factory=lambda: [  1,   1,   1,  1])
     fc_layers:  int      = 2
     fc_units:   int      = 256
     activation: str      = "silu"
@@ -58,17 +58,17 @@ class TransitionConfig(BaseConfig):
     
 @dataclass
 class WorldModelConfig(BaseConfig):
-    lr:              float  = 2e-4
-    latent_dim:      int    = 64
-    n_epochs:        int    = 3
-    mb_size:         int    = 64
-    beta_pred:       float  = 3.0
-    beta_dym:        float  = 0.001
-    beta_rep:        float  = 0.0001
-    horizon:         int    = 0
-    saliency_bonus:  float  = 3.0
-    blur_kernel:     int    = 3
-    free_nats:    float  = 1.00
+    lr:                float = 2e-4
+    latent_dim:        int   = 64
+    n_epochs:          int   = 10
+    mb_size:           int   = 64
+    beta_pred:         float = 3.0
+    beta_dym:          float = 0.001
+    beta_rep:          float = 0.0001
+    horizon:           int   = 0
+    saliency_bonus:    float = 3.0
+    blur_kernel:       int   = 3
+    free_nats:         float = 1.00
     gradient_clipping: float = 0.5
     encoder: EncoderConfig = EncoderConfig()
     decoder: DecoderConfig = DecoderConfig()
@@ -99,51 +99,52 @@ class AgentConfig(BaseConfig):
 
 @dataclass
 class SoftConfig(BaseConfig):
-    depth:        int   = 3
-    lr:           float = 0.01
-    beta_uniform: float = 0.1
-    beta_mse:     float = 0.0
-    momentum:     float = 0.5
-    lmbda:        float = 0.1
-    num_epochs:   int   = 10
-    batch_size:   int   = 64
-    test_size:    float = 0.2
-
+    depth:           int   = 3
+    lr:              float = 1e-4
+    beta_uniform:    float = 0.1
+    beta_mse:        float = 0.0
+    momentum:        float = 0.9
+    lmbda:           float = 0.1
+    num_epochs:      int   = 20
+    batch_size:      int   = 64
+    test_size:       float = 0.2
+    concentration:   float = 20.0
+    sharpen:         float = 1.5
 
 # VISUALIZER
 
 
 @dataclass
 class BaseVisConfig(BaseConfig):
-    bgc: Tuple[int, int, int] = (255, 255, 255)
+    bgc:  Tuple[int, int, int] = (255, 255, 255)
     blue: Tuple[int, int, int] = (255, 0, 0)
-    red: Tuple[int, int, int] = (0, 0, 255)
-    embedding_width: int = 100
-    top_margin: int = 20
-    lateral_margin: int = 20
+    red:  Tuple[int, int, int] = (0, 0, 255)
+    embedding_width:       int = 100
+    top_margin:            int = 20
+    lateral_margin:        int = 20
 
 
 @dataclass
 class VAEVisualizerConfig(BaseVisConfig):
-    window_width: int = 720
+    window_width:  int = 720
     window_height: int = 480
-    main_height: int = 200
-    window_name: str = "Autoencoder"
+    main_height:   int = 200
+    window_name:   str = "Autoencoder"
     mode: Literal["full", "actual"] = "actual"
     saliency_mode: bool = True
 
 @dataclass
 class TreeVisualizerConfig(BaseVisConfig):
-    window_width: int = 720
-    window_height: int = 680
-    font_scale: float = 0.5
-    font_thickness: int = 1
-    window_name: str = "Soft Decision Tree"
-    show_embed: bool = True
-    show_legend: bool = False
-    show_prob_text: bool = True
-    show_label: bool = True
-    img_size: int = 120 # [16..256]
+    window_width:   int   = 720
+    window_height:  int   = 680
+    font_scale:     float = 0.5
+    font_thickness: int   = 1
+    window_name:    str   = "Soft Decision Tree"
+    show_embed:     bool  = False
+    show_legend:    bool  = False
+    show_prob_text: bool  = True
+    show_label:     bool  = True
+    img_size:       int   = 120 # [16..256]
 
 @dataclass
 class OverallVisualizerConfig(BaseVisConfig):
@@ -160,14 +161,15 @@ class VisConfig(BaseVisConfig):
 
 @dataclass
 class SessionConfig(BaseConfig):
-    type: str = "train"
-    n_episodes: int = 100
-    n_steps: int    = 1000
-    seed: int       = 42
-    render: bool    = True
-    vae_vis: bool   = False
-    online_buffer: int = 2
-    replay_buffer: int = 8
+    type:                str  = "train"
+    n_episodes:          int  = 100
+    n_steps:             int  = 1000
+    seed:                int  = 42
+    render:              bool = True
+    vae_vis:             bool = False
+    online_buffer:       int  = 4
+    replay_buffer:       int  = 20
+    vae_warmup_episodes: int  = 2
 
 
 @dataclass
@@ -183,5 +185,6 @@ class Config(BaseConfig):
     agent: AgentConfig = field(default_factory=AgentConfig)
     session: SessionConfig = field(default_factory=SessionConfig)
     exp: ExpConfig = field(default_factory=ExpConfig)
+    soft: SoftConfig = field(default_factory=SoftConfig)
 
 

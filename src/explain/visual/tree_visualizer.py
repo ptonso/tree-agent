@@ -39,6 +39,7 @@ class SoftTreeVisualizer(BaseVisualizer):
         self.world_model: Optional[WorldModel] = None
         self.decoded_cache: Dict[InnerNode, np.ndarray] = {}
         self.embed = np.zeros((1, 64))
+        self.labeled: bool = False
 
 
     def update(
@@ -50,6 +51,7 @@ class SoftTreeVisualizer(BaseVisualizer):
         """
         Updates the tree visualization dynamically.
         """
+        self.labeled = False
         self.canvas[:] = self.config.bgc
         
         self.world_model = world_model
@@ -60,7 +62,7 @@ class SoftTreeVisualizer(BaseVisualizer):
 
         if not self.tree or not self.tree.root:
             return
-            
+
         nodes_list = self._collect_nodes_bfs(self.tree.root)
 
         if self.world_model:
@@ -70,6 +72,10 @@ class SoftTreeVisualizer(BaseVisualizer):
 
         for node, depth, idx in nodes_list:
             self._draw_inner_node(node, depth, idx)
+
+        self.metric = tree.metric
+        if self.metric is not None:
+            self._draw_metric()
 
 
     def _initialize_layout(self, tree: SoftDecisionTree):
@@ -215,8 +221,8 @@ class SoftTreeVisualizer(BaseVisualizer):
                 cumulative_probs[node.left] = parent_prob * prob_left
                 cumulative_probs[node.right] = parent_prob * prob_right
                 
-                self._draw_edge(x, y, lx, ly, cumulative_probs[node.left])
-                self._draw_edge(x, y, rx, ry, cumulative_probs[node.right])
+                self._draw_edge(x, y, lx, ly, prob_left)
+                self._draw_edge(x, y, rx, ry, prob_right)
             elif isinstance(node, LeafNode):
                 leaf_probs[node] = cumulative_probs.get(node, 0.0)
             
@@ -550,14 +556,15 @@ class SoftTreeVisualizer(BaseVisualizer):
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA
                 )
 
-            if self.config.show_label:
+            if self.config.show_label and not self.labeled:
                 label_x = tl_x - 60
                 label_y = y1 + h_box // 2 + 5
                 cv2.putText(
                     self.canvas, label_names[i], (label_x, label_y),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1, cv2.LINE_AA
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 1, cv2.LINE_AA
                 )
 
+        self.labeled = True
 
         if self.most_probable_leaf == node:
             # border for most probable leaf
@@ -566,6 +573,52 @@ class SoftTreeVisualizer(BaseVisualizer):
                 (tl_x + w_box + 2, tl_y + h_box * n_actions + 2),
                 (0, 0, 0), 3
                 )
+        
+
+    def _draw_metric(self) -> None:
+        """
+        Draws a larger box displaying the argmax accuracy in the top-right corner
+        of the canvas, using a bigger font and dimensions for better readability.
+        """
+        import cv2
+
+        margin = 20
+        box_width = 200
+        box_height = 32
+        font_scale = 0.65
+        font_thickness = 2
+
+        x = self.config.window_width - box_width - margin
+        y = margin
+
+        cv2.rectangle(self.canvas, (x, y), (x + box_width, y + box_height),
+                    (240, 240, 240), thickness=cv2.FILLED)
+
+        cv2.rectangle(self.canvas, (x, y), (x + box_width, y + box_height),
+                    (0, 0, 0), thickness=2)
+
+        text = f"Argmax Acc: {self.metric:.2f}"
+
+        (text_width, text_height), _ = cv2.getTextSize(
+            text,
+            cv2.FONT_HERSHEY_SIMPLEX,
+            font_scale,
+            font_thickness
+        )
+        text_x = x + (box_width - text_width) // 2
+        text_y = y + (box_height + text_height) // 2 - 5
+
+        cv2.putText(
+            self.canvas,
+            text,
+            (text_x, text_y),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            font_scale,
+            (0, 0, 0),
+            font_thickness,
+            cv2.LINE_AA
+        )
+
 
     def _apply_background_gradient(self) -> None:
         """Creates a visually appealing gradient background."""

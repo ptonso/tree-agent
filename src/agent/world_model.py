@@ -4,8 +4,6 @@ import torch.nn.functional as F
 import logging
 from typing import Optional, List, Dict
 
-from torchvision.models.segmentation import deeplabv3_resnet50, DeepLabV3_ResNet50_Weights
-
 from src.agent.structures import State, Observation
 from src.agent.vae import Encoder, Decoder
 from src.agent.transition_model import TransitionModel
@@ -22,9 +20,6 @@ class WorldModel(nn.Module):
         self.device = config.device
         self._init_hyperparameter(config.agent.world_model)
         self._init_networks(config)
-
-        self.saliency_model = deeplabv3_resnet50(weights=DeepLabV3_ResNet50_Weights.DEFAULT).eval().to(self.device)
-        self.saliency_cache = None
 
     def _init_hyperparameter(self, wm_cfg):
         self.state_dim = wm_cfg.latent_dim

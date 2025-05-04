@@ -86,6 +86,9 @@ class SoftDecisionTree(nn.Module):
         self.input_dim: Optional[int] = None
         self.output_dim: Optional[int] = None
         self.optimizer: Optional[optim.Optimizer] = None
+        self.metric: Optional[float] = None
+
+        self.sigma_init = 10.0
 
     def setup_network(self, X: torch.Tensor, y: torch.Tensor):
         """Dynamically initializes the tree structure based on input and output dimensions."""
@@ -99,11 +102,87 @@ class SoftDecisionTree(nn.Module):
         self.optimizer = optim.SGD(self.parameters(), lr=self.lr, momentum=self.momentum)
         self.to(self.device)
 
-    def train_step(self, trajectories: List["Trajectory"]) -> Dict[str, float]:
+
+    def train_step(self, trajectories: List["Trajectory"], keep_tree: bool = False) -> Dict[str, float]:
+        """
+        if tree already exists, use depth-based warm reinitialization and retrain
+        if tree does not exist, initialize with default values.
+        if keep_tree, simply proceed to train existing tree with gradient.
+
+        """
+        
         batch = Batch(trajectories, self.device)
         batch_data = batch.prepare_tensors()
-        metrics = self._train_step(batch_data.states, batch_data.actions_prob)
+        X = batch_data.states
+        y = batch_data.actions_prob
+
+        # full rebuild
+        self.root = None
+        self.setup_network(X, y)
+        self._initialize_leaf_nodes(y)
+
+        # if not keep_tree:
+        #     self._reinitialize_tree(X, y)
+        metrics = self._train_step(X, y)
         self.log_metrics(metrics)
+        self.metric = metrics["argmax_acc_loss"]
+        return metrics
+
+
+    def _reinitialize_tree(self, X: torch.Tensor, y: torch.Tensor):
+        """
+        If no tree exists, 
+            initialize it using the current batch and initialize leaves smartly.
+        """
+        if self.root is None:
+            self.setup_network(X, y)
+            self._initialize_leaf_nodes(y)
+        else:
+            self._reinitialize_node(self.root)
+
+    def _reinitialize_node(self, node):
+        """Normal reinit: sample each parameter from N(old, sigma^2)."""
+        if isinstance(node, InnerNode):
+            with torch.no_grad():
+                node.fc.weight.data.copy_(
+                    torch.normal(mean=node.fc.weight.data, std=self.sigma_init)
+                )
+                node.fc.bias.data.copy_(
+                    torch.normal(mean=node.fc.bias.data, std=self.sigma_init)
+                )
+                node.beta.data.copy_(
+                    torch.normal(mean=node.beta.data, std=self.sigma_init)
+                )
+            # Recurse
+            self._reinitialize_node(node.left)
+            self._reinitialize_node(node.right)
+
+        elif isinstance(node, LeafNode):
+            with torch.no_grad():
+                node.param.data.copy_(
+                    torch.normal(mean=node.param.data, std=self.sigma_init)
+                )
+
+
+    def _initialize_leaf_nodes(self, y: torch.Tensor):
+        """Initialize leaf node parameters smartly based on the distribution over action probabilities."""
+        avg = y.mean(dim=0) + 1e-6  # add epsilon to avoid log(0)
+        base_probs = avg / avg.sum()
+
+
+        def _set_leaf(node, depth: int):
+            if isinstance(node, LeafNode):
+
+                sample_probs = torch.distributions.Dirichlet(
+                    base_probs * self.config.concentration).sample()
+                
+                sharpened = sample_probs ** self.config.sharpen
+                sample_probs = sharpened / sharpened.sum()
+                node.param.data.copy_(torch.log(sample_probs))
+            else:
+                _set_leaf(node.left, depth + 1)
+                _set_leaf(node.right, depth + 1)
+        _set_leaf(self.root, 0)
 
 
     def _train_step(self, X: torch.Tensor, y: torch.Tensor) -> Dict[str, float]:
@@ -116,20 +195,19 @@ class SoftDecisionTree(nn.Module):
         X_train, X_val = X[:split_idx], X[split_idx:]
         y_train, y_val = y[:split_idx], y[split_idx:]
 
-        best_total_loss, best_kl_loss, best_mse_loss, best_argmax_acc_loss, best_unif_kl_loss = float('inf'), float('inf'), float('inf'), float('inf'), float('inf')
+        best_total_loss, best_kl_loss, best_mse_loss, best_argmax_acc_loss = float('inf'), float('inf'), float('inf'), float('inf')
 
         for _ in range(self.num_epochs):
             train_kl = self._train_epoch(X_train, y_train)
-            val_total, val_kl, val_mse, val_acc, val_unif = self._evaluate(X_val, y_val)
+            val_total, val_kl, val_mse, val_acc = self._evaluate(X_val, y_val)
 
             if val_total < best_total_loss:
-                best_total_loss, best_kl_loss, best_mse_loss, best_argmax_acc_loss, best_unif_kl_loss = val_total, val_kl, val_mse, val_acc, val_unif
+                best_total_loss, best_kl_loss, best_mse_loss, best_argmax_acc_loss = val_total, val_kl, val_mse, val_acc
 
         return {
             "actual_loss": best_total_loss, 
             "kl_loss": best_kl_loss, 
             "mse_loss": best_mse_loss,
-            'uniform_kl_loss': best_unif_kl_loss,
             "argmax_acc_loss" : best_argmax_acc_loss
             }
 
@@ -144,7 +222,7 @@ class SoftDecisionTree(nn.Module):
             batch_X, batch_y = X[batch_indices].to(self.device), y[batch_indices].to(self.device)
 
             self.optimizer.zero_grad()
-            total_loss, _, _, _, _ = self.cal_loss(batch_X, batch_y)
+            total_loss, _, _, _ = self.cal_loss(batch_X, batch_y)
             total_loss.backward()
             self.optimizer.step()
 
@@ -155,20 +233,19 @@ class SoftDecisionTree(nn.Module):
     def _evaluate(self, X: torch.Tensor, y: torch.Tensor) -> Tuple[float, float]:
         """Evaluates KL and MSE loss on validation set."""
         self.eval()
-        total, total_kl, total_mse, total_acc, total_unif = 0, 0, 0, 0, 0
+        total, total_kl, total_mse, total_acc = 0, 0, 0, 0
 
         with torch.no_grad():
             for start in range(0, len(X), self.batch_size):
                 batch_X, batch_y = X[start:start + self.batch_size].to(self.device), y[start:start + self.batch_size].to(self.device)
-                total_loss, kl_loss, mse_loss, acc_loss, unif_loss = self.cal_loss(batch_X, batch_y)
+                total_loss, kl_loss, mse_loss, acc_loss = self.cal_loss(batch_X, batch_y)
                 total += total_loss.item()
                 total_kl += kl_loss.item()
                 total_mse += mse_loss.item()
                 total_acc += acc_loss.item()
-                total_unif += unif_loss.item()
 
         k = (len(X) / self.batch_size)
-        return total / k, total_kl / k, total_mse / k, total_acc / k, total_unif / k
+        return total / k, total_kl / k, total_mse / k, total_acc / k
     
 
     def cal_loss(self, X: torch.Tensor, y: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, float]:
@@ -176,26 +253,21 @@ class SoftDecisionTree(nn.Module):
         batch_size = y.size(0)
         leaf_accumulator = self.root.cal_prob(X, torch.ones(batch_size, 1, device=self.device))
 
-        kl_loss, mse_loss, kl_uniform_loss = 0, 0, 0
+        kl_loss, mse_loss = 0., 0.
         correct, total_weight = 0, 0
 
         num_classes = y.size(1)
-        uniform_dist = torch.full_like(y, 1.0 / num_classes)
 
         for path_prob, Q in leaf_accumulator:
             
             # KL divergence between predicted and true label
             kl_div = F.kl_div(Q.log(), y, reduction='batchmean')
             
-            # KL divergence between predicted and uniform
-            kl_div_uniform = F.kl_div(Q.log(), uniform_dist, reduction='batchmean')
-
             # MSE loss
             mse = F.mse_loss(Q, y)
 
             kl_loss += (path_prob * kl_div).sum()
             mse_loss += (path_prob * mse).sum()
-            kl_uniform_loss += (path_prob * kl_div_uniform).sum()
 
             pred_class = Q.argmax(dim=1)
             true_class = y.argmax(dim=1)
@@ -204,10 +276,12 @@ class SoftDecisionTree(nn.Module):
             correct += (weight * (pred_class == true_class).float()).sum().item()
             total_weight += weight.sum()
 
-        argmax_accuracy = correct / total_weight if total_weight > 0 else 0
-        total_loss = kl_loss - self.config.beta_uniform * kl_uniform_loss + self.config.beta_mse * mse_loss
+        ratio = float(correct / total_weight) if total_weight > 0 else 0.0
+        argmax_accuracy = torch.tensor(ratio, device=self.device)
+
+        total_loss = kl_loss
         
-        return total_loss / batch_size, kl_loss / batch_size, mse_loss / batch_size, kl_uniform_loss / batch_size, argmax_accuracy
+        return total_loss / batch_size, kl_loss / batch_size, mse_loss / batch_size, argmax_accuracy
 
 
     def collect_parameters(self):
@@ -238,7 +312,6 @@ class SoftDecisionTree(nn.Module):
         self.logger.info(f"DecisionTree Loss:   {metrics['actual_loss']:.4f}")
         self.logger.info(f"    KL Loss:         {metrics['kl_loss']:.4f}")
         self.logger.info(f"    MSE Loss:        {metrics['mse_loss']:.4f}")
-        self.logger.info(f"    Uniform KL Loss: {metrics['uniform_kl_loss']:.4f}")
         self.logger.info(f"    Argmax Acc Loss: {metrics['argmax_acc_loss']:.4f}")
 
     def set_seed(self, seed):

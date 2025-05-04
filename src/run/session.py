@@ -66,7 +66,6 @@ class Session:
                 with torch.no_grad():
                     x_hat = self.agent.world_model.decode(state)
                     # saliency = self.agent.world_model.find_objects(observation.as_tensor)[0, 0].cpu().numpy()
-
                     self.visualizer.update(
                         observation=observation.for_render,
                         state=state,
@@ -120,8 +119,14 @@ class Session:
                 wm_metrics[episode] = wm_train_metrics
 
             if len(self.replay_trajectories) >= self.config.session.replay_buffer:
-                agent_train_metrics = self.agent.train_step(self.replay_trajectories)
-                dtree_train_metrics = self.dtree.train_step(self.replay_trajectories)
+
+                if episode >= self.config.session.vae_warmup_episodes:
+                    agent_train_metrics = self.agent.train_step(self.replay_trajectories)
+                    dtree_train_metrics = self.dtree.train_step(self.replay_trajectories)
+                else:
+                    agent_train_metrics = {}
+                    dtree_train_metrics = {}
+
                 agent_metrics[episode] = agent_train_metrics
                 dtree_metrics[episode] = dtree_train_metrics
                 self.replay_trajectories = []
@@ -153,7 +158,6 @@ class Session:
             self.logger.info(f"CUDA memory allocated: {mem_alloc:6.2f} MB")
             self.logger.info(f"CUDA memory reserved:  {mem_reserved:6.2f} MB")
 
-
         self.env = LabEnvironment(config=self.config)
         observation = self.env.reset(seed=self.seed)
 
@@ -164,7 +168,7 @@ class Session:
 
         self.agent = Agent(action_dim=action_dim, state_dim=state_dim, config=self.config, logger=self.logger)
 
-        self.dtree = SoftDecisionTree(config=SoftConfig(), logger=self.logger)
+        self.dtree = SoftDecisionTree(config=self.config.soft, logger=self.logger)
 
         self.visualizer = Visualizer(window_name="Visualizer")
 
