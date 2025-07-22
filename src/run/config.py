@@ -30,10 +30,10 @@ class EnvConfig(BaseConfig):
 
 @dataclass
 class EncoderConfig(BaseConfig):
-    channels: List[int]  = field(default_factory=lambda: [ 32,  64, 128])# , 256])
-    kernels:  List[int]  = field(default_factory=lambda: [  4,   4,   3])# ,   3])
-    strides:  List[int]  = field(default_factory=lambda: [  2,   2,   1])# ,   1])
-    paddings: List[int]  = field(default_factory=lambda: [  1,   1,   1])# ,   2])
+    channels: List[int]  = field(default_factory=lambda: [ 32,  64, 128])
+    kernels:  List[int]  = field(default_factory=lambda: [  4,   4,   3])
+    strides:  List[int]  = field(default_factory=lambda: [  2,   2,   1])
+    paddings: List[int]  = field(default_factory=lambda: [  1,   1,   1])
     fc_layers:  int      = 2
     fc_units:   int      = 256
     activation: str      = "silu"
@@ -41,10 +41,10 @@ class EncoderConfig(BaseConfig):
 
 @dataclass
 class DecoderConfig(BaseConfig):
-    channels: List[int]  = field(default_factory=lambda:  [ 128,  64, 32]) # [256, 128,  64, 32])
-    kernels:  List[int]  = field(default_factory=lambda:  [   4,   4,  4]) # [  4,   4,   4,  4])
-    strides:  List[int]  = field(default_factory=lambda:  [   2,   2,  1]) # [  2,   2,   2,  1])
-    paddings: List[int]  = field(default_factory=lambda:  [   1,   1,  1]) # [  1,   1,   1,  1])
+    channels: List[int]  = field(default_factory=lambda:  [ 128,  64, 32])
+    kernels:  List[int]  = field(default_factory=lambda:  [   4,   4,  4])
+    strides:  List[int]  = field(default_factory=lambda:  [   2,   2,  1])
+    paddings: List[int]  = field(default_factory=lambda:  [   1,   1,  1])
     fc_layers:  int      = 2
     fc_units:   int      = 256
     activation: str      = "silu"
@@ -173,7 +173,7 @@ class SessionConfig(BaseConfig):
     replay_buffer:         int  = 12
     vae_warmup_episodes:   int  =  0# 200 # 100
     dtree_warmup_episodes: int  =  0# 200 # 700
-    vis_prints_path: Optional[str] = None # "reports/better-dtree"
+    vis_prints_path: Optional[str] = None # "reports/vae-saleincy-test"
 
 
 @dataclass

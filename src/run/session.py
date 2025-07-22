@@ -50,7 +50,6 @@ class Session:
             state = self.agent.world_model.encode(observation)
 
             action = self.agent.actor.policy(state)
-            # action = self.agent.policy(observation)
 
             next_obs_data, reward, done = self.env.step(action.as_lab)
             next_observation = Observation.from_env(next_obs_data, device=self.config.device)
@@ -77,8 +76,9 @@ class Session:
                     self.visualizer.render()
 
                     savepath = self.config.session.vis_prints_path
-                    if episode_id > self.config.session.dtree_warmup_episodes \
-                        and savepath is not None:
+                    if (episode_id > self.config.session.dtree_warmup_episodes \
+                    or (episode_id > 250 and episode_id < 350) \
+                        and savepath is not None):
                         self.visualizer.save(savepath)
 
             trajectory.append(

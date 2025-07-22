@@ -299,51 +299,7 @@ class SoftDecisionTree(nn.Module):
         argmax_acc = (pred.argmax(dim=1) == y.argmax(dim=1)).float().mean()
 
         return total, kl_loss, mse_loss, argmax_acc
-
-        # T = self.config.temp_teacher
-        # if T != 1.0:
-        #     eps = 1e-8
-        #     teacher_logits   = torch.log(y + eps)
-        #     teacher_logits_T = teacher_logits / T
-        #     y_sharp = torch.softmax(teacher_logits_T, dim=1)
-        #     kl_scale = T * T
-        # else:
-        #     y_sharp = y
-        #     kl_scale = 1.0
         
-        # leaf_acc = self.root.cal_prob(
-        #     X,
-        #     torch.ones(batch_size, 1, device=self.device)
-        # )
-    
-        # kl_loss, mse_loss = 0., 0.
-        # correct, total_weight = 0, 0
-
-        # for path_prob, Q in leaf_acc:
-            
-        #     # KL divergence between predicted and true label
-        #     kl_div = F.kl_div(Q.log(), y_sharp, reduction='batchmean') * kl_scale
-            
-        #     # MSE loss
-        #     mse = F.mse_loss(Q, y)
-
-        #     kl_loss += (path_prob * kl_div).sum()
-        #     mse_loss += (path_prob * mse).sum()
-
-        #     pred_class = Q.argmax(dim=1)
-        #     true_class = y.argmax(dim=1)
-            
-        #     weight = path_prob.squeeze() 
-        #     correct += (weight * (pred_class == true_class).float()).sum().item()
-        #     total_weight += weight.sum()
-
-        # ratio = float(correct / total_weight) if total_weight > 0 else 0.0
-        # argmax_accuracy = torch.tensor(ratio, device=self.device)
-
-        # total_loss = kl_loss + self.config.beta_mse * mse_loss
-        
-        # return total_loss / batch_size, kl_loss / batch_size, mse_loss / batch_size, argmax_accuracy
-
 
     def collect_parameters(self):
         """Register parameters from all nodes in the tree."""

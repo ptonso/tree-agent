@@ -6,9 +6,9 @@ from src.run.config import Config, SessionConfig, EnvConfig, ExpConfig
 
 
 def main():
-    # rendered_main()
+    rendered_main()
     # single_exp_main()
-    multi_exp_main()
+    # multi_exp_main()
     pass
 
 
@@ -19,7 +19,7 @@ def rendered_main():
             n_episodes=1000,
             n_steps=1000,
             seed=42,
-            render=False, # True
+            render=True, # True
             vae_vis=True,
         ),
     env=EnvConfig(
@@ -56,27 +56,51 @@ def single_exp_main():
 def multi_exp_main():
     baseline_config = Config()
     baseline_config.session.render = False
-    baseline_config.session.vae_vis = True
+    baseline_config.session.vae_vis = False
     baseline_config.session.n_episodes = 500
     baseline_config.session.dtree_warmup_episodes = 500
+
+
+    baseline_config.agent.world_model.encoder.channels = [64,32,16]
+    baseline_config.agent.world_model.decoder.channels = [16,32,64]
+    baseline_config.agent.world_model.encoder.fc_units = 128
+    baseline_config.agent.world_model.decoder.fc_units = 128
+    baseline_config.agent.world_model.lr = 1e-4
+    baseline_config.agent.world_model.latent_dim = 16
+    baseline_config.agent.world_model.saliency_bonus = 0.0
+    baseline_config.agent.world_model.blur_kernel = 0
+
 
     parametric_changes = [
         {
             "exp": {"name": "bonus_free"},
-            "agent": {
-                "world_model": {
-                    "saliency_bonus": 0.0,
-                    "blur_kernel": 0
-                }
-            }
         },
         {
             "exp": {"name": "saliency_bonus"},
             "agent": {
                 "world_model": {
-                    "saliency_bonus": 3.0
+                    "saliency_bonus": 3.0,
+                    "blur_kernel": 3,
                     }
                 }
+        },
+        {
+            "exp": {"name": "larger_latent"},
+            "agent": {
+                "world_model": {
+                    "latent_dim": 64
+                    }
+                }
+        },
+            {
+            "exp": {"name": "larger_everything"},
+            "agent": {
+                "world_model": {
+                    "latent_dim": 64,
+                    "encoder": {"channels": [256,128,64]},
+                    "decoder": {"channels": [64,128,256]}
+                }
+            }
         },
     ]
 
