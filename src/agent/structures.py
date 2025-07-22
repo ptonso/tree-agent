@@ -1,6 +1,7 @@
 import torch
+import cv2
 import numpy as np
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 
 
 class Latent:
@@ -19,11 +20,21 @@ class Latent:
         Args:
             logits: (B, d, K) - d variables of K categories.
         """
+<<<<<<< HEAD
         self.logits = logits # (B, d, K)
         self.shape = logits.shape
         self.B = logits.shape[0]
         self.d = logits.shape[1]
         self.K = logits.shape[2]
+=======
+        if state_data.ndim < 2:
+            state_data = np.expand_dims(state_data, axis=0)
+            print(f"state_data.shape: {state_data.shape}")
+
+
+        self.state_data = state_data 
+        self.shape = state_data.shape # (B, E)
+>>>>>>> temp-work
         self.device = device
 
         self._as_probs: Optional[torch.Tensor] = None # (B, d, K) - parameter
@@ -72,6 +83,7 @@ class Latent:
 class Hidden:
     def __init__(self):
         pass
+
 
 
 class Observation:
@@ -129,14 +141,22 @@ class Observation:
         return self._as_tensor
     
     @property
-    def for_render(self) -> np.ndarray:
+    def for_render(self) -> List[np.ndarray]:
         """
-        generate (H, W, C) uint8[0..255] image 
+        generate (H, W, C) uint8[0..255] image or
+        (B, H, W, C) uint8[0..255]
         """
         if self._for_render is None:
-            img = np.transpose(self.obs_data[0], (1,2,0))
-            img = (img + 0.5) * 255.
-            self._for_render = np.clip(img, 0, 255).astype(np.uint8)
+            self._for_render = []
+            for i in range(self.obs_data.shape[0]):
+                img = np.transpose(self.obs_data[i], (1, 2, 0))
+                img = (img + 0.5) * 255. 
+                img = np.clip(img, 0, 255).astype(np.uint8)
+                img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)        
+                self._for_render.append(img)
+
+        if len(self._for_render) == 1:
+            self._for_render = self._for_render[0]
         return self._for_render
 
 
@@ -199,12 +219,14 @@ class Action:
             device: torch device to use
         """
         self.action_probs = action_probs # (B, action_dim)
-        self.sampled_action = sampled_action # int
+        self.sampled_action = (sampled_action.item() if isinstance(sampled_action, torch.Tensor)
+                               else sampled_action) # int
         self.device = device
 
         self._as_numpy: Optional[np.ndarray] = None       # (action_dim,) probability
         self._as_tensor: Optional[torch.Tensor] = None    # (action_dim,) probability
         self._as_lab: Optional[np.ndarray] = None         # (7,) lab integers
+
 
     @property
     def as_tensor(self) -> Optional[torch.Tensor]:

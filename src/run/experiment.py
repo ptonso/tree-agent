@@ -43,6 +43,7 @@ class Experiment:
         all_times = []
         wm_all_metrics = defaultdict(list)
         agent_all_metrics = defaultdict(list)
+        dtree_all_metrics = defaultdict(list)
 
         for run_idx in range(self.config.exp.n_runs):
             self.logger.info(f"{'='*50}")
@@ -50,11 +51,11 @@ class Experiment:
             self.logger.info(f"{'='*50}")
             t0 = time.time()
             
-            self.config.session.seed = self.config.exp.seed + run_idx
+            self.config.session.seed = self.config.seed + run_idx
             
             session = Session(self.config, self.logger)
             session.setup()
-            rewards, wm_metrics, agent_metrics = session.run()
+            rewards, wm_metrics, agent_metrics, dtree_metrics = session.run()
             run_time = time.time() - t0
 
             self.logger.info("Average rewards:")
@@ -72,12 +73,15 @@ class Experiment:
                 wm_all_metrics[ep+1].append(metrics)
             for ep, metrics in agent_metrics.items():
                 agent_all_metrics[ep+1].append(metrics)
+            for ep, metrics in dtree_metrics.items():
+                dtree_all_metrics[ep+1].append(metrics)
 
         avg_rewards = np.mean(all_rewards, axis=0)
         std_rewards = np.std(all_rewards, axis=0)
 
         wm_avg, wm_std = self.aggregate_metrics(wm_all_metrics)
         agent_avg, agent_std = self.aggregate_metrics(agent_all_metrics)
+        dtree_avg, dtree_std = self.aggregate_metrics(dtree_all_metrics)
        
         experiment_data = {
             "config": Experiment.dataclass2dict(self.config),
@@ -96,7 +100,9 @@ class Experiment:
             },
         "train_metrics": {
             "world_model": {"avg": wm_avg, "std": wm_std},
-            "agent": {"avg": agent_avg, "std": agent_std}
+            "agent": {"avg": agent_avg, "std": agent_std},
+            "dtree": {"avg": dtree_avg, "std": dtree_std}
+
             }
         }
 
@@ -109,6 +115,9 @@ class Experiment:
         std_metrics = {}
 
         for ep, metrics_list in all_metrics.items():
+            if not metrics_list or metrics_list[0] is None:
+                continue
+
             metric_keys = metrics_list[0].keys()
             metrics_per_key = {key: [m.get(key, 0) for m in metrics_list] for key in metric_keys}
 
@@ -159,6 +168,29 @@ class Experiment:
         plt.show(block=False)
         plt.pause(0.5)
 
+
+    def plot_dtree_results(self, savefig: bool = True) -> None:
+        if "dtree" in self.experiment_data["train_metrics"]:
+            dtree_metrics = self.experiment_data["train_metrics"]["dtree"]["avg"]
+            episodes = sorted(dtree_metrics.keys())
+
+            fig, ax = plt.subplots(figsize=(10,6))
+            ax.set_title("Soft Tree Explainer Losses")
+            for key in ["actual_loss", "kl_loss", "mse_loss", "argmax_acc_loss"]:
+                values = [dtree_metrics[ep].get(key, 0.0) for ep in episodes]
+                ax.plot(episodes, values, label=key)
+            ax.set_xlabel("Episode")
+            ax.set_ylabel("Loss")
+            ax.grid(alpha=0.3)
+            ax.legend()
+            
+            if savefig:
+                loss_fig_path = os.path.join(self.results_dir, f"{self.filename}_dtree_losses.png")
+                plt.savefig(loss_fig_path, dpi=300, bbox_inches='tight')
+            plt.show(block=False)
+            plt.pause(0.5)
+
+    
     @staticmethod
     def dataclass2dict(obj):
         if is_dataclass(obj):

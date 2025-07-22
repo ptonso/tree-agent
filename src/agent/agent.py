@@ -1,5 +1,6 @@
 import torch
 import torch.nn.functional as F
+import logging
 
 from typing import List, Tuple, Dict, Optional, Union
 
@@ -15,17 +16,19 @@ class Agent:
             self, 
             action_dim: int, 
             state_dim: Union[Tuple[int, ...], int],
-            config: object
+            config: object,
+            logger: Optional[logging.Logger] = None
         ):
         self.device = config.device
         self.action_dim = action_dim
         self.state_dim = state_dim
         self.config = config
+        self.logger = logger
         self.gamma = config.agent.gamma
 
         self.actor = Actor(
             state_dim=self.state_dim,
-            action_dim=3,
+            action_dim=self.action_dim,
             config=self.config
         ).to(self.device)
 
@@ -36,7 +39,8 @@ class Agent:
 
         self.world_model = WorldModel(
             config=self.config,
-            actor=self.actor
+            actor=self.actor,
+            logger=self.logger
         ).to(self.device)
 
 
@@ -83,12 +87,10 @@ class Agent:
     def train_step(
             self,
             trajectories: List[Trajectory],
-            logger: Optional[object] = None,
         ) -> Dict[str, float]:
         """Train agent using list of trajectory"""
 
-        batch = Batch(trajectories, self.device)
-        tensors = batch.tensors
+        tensors = Batch(trajectories, self.device).prepare_tensors()
         N = tensors.states.size(0)
         self.mb_size = self.config.agent.mb_size
 
@@ -144,10 +146,10 @@ class Agent:
             count_samples
         )
 
-        if logger:
-            logger.info(f"Agent Loss:          {metrics['avg_total_loss']:.4f}")
-            logger.info(f"    Actor Loss:      {metrics['avg_actor_loss']:.4f}")
-            logger.info(f"    Critic Loss:     {metrics['avg_critic_loss']:.4f}")
+        if self.logger:
+            self.logger.info(f"Agent Loss:          {metrics['avg_total_loss']:.4f}")
+            self.logger.info(f"    Actor Loss:      {metrics['avg_actor_loss']:.4f}")
+            self.logger.info(f"    Critic Loss:     {metrics['avg_critic_loss']:.4f}")
             
         return metrics
 

@@ -50,7 +50,7 @@ class Actor(nn.Module):
         Args:
             state: (batch_size, *state_dim)
         Returns:
-            action_probs: (batch_size, 7) with only `action_dim` used
+            action_probs: (batch_size, action_dim)
         """
         if self.in_type == "obs":
             flattened_features = self.cnn(state)
@@ -58,11 +58,7 @@ class Actor(nn.Module):
         else:
             logits = self.policy_network(state) # (batch_size, action_dim)
         
-        probs_3d = F.softmax(logits, dim=-1)
-        batch_size = state.size(0)
-        probs_7d = torch.zeros(batch_size, 7, device=self.device) # (batch_size, 7)
-        probs_7d[:, :3] = probs_3d
-        return probs_7d
+        return F.softmax(logits, dim=-1)
     
     def policy(self, state: State) -> Action:
         """
