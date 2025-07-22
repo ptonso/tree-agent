@@ -8,6 +8,7 @@ experiments/*
 
 test/
 reports/*
+lab/*
 
 *.log
 *.txt
